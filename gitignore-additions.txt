@@ -1,0 +1,11 @@
+venv/
+mujoco_menagerie/
+__pycache__/
+*.pyc
+.DS_Store
+models/*.task
+
+# raw footage is large: commit only data/sample/
+data/raw/
+data/keypoints/
+outputs/
