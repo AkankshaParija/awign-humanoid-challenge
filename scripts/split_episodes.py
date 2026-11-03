@@ -17,10 +17,46 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
 import numpy as np
+
+
+def cut_with_ffmpeg(video: str, dst: Path, t0: float, dur: float) -> None:
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-ss", f"{t0:.3f}", "-i", video,
+         "-t", f"{dur:.3f}", "-c:v", "libx264", "-preset", "veryfast",
+         "-an", str(dst)],
+        check=True,
+    )
+
+
+def cut_with_opencv(video: str, dst: Path, start_frame: int, end_frame: int,
+                    max_width: int = 1280) -> None:
+    """Fallback when ffmpeg is not installed. Also downscales, which keeps the
+    review clips small; the 4K original is untouched."""
+    import cv2
+
+    cap = cv2.VideoCapture(video)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    scale = min(1.0, max_width / src_w) if src_w else 1.0
+    w, h = int(src_w * scale), int(src_h * scale)
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    writer = cv2.VideoWriter(str(dst), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    for _ in range(end_frame - start_frame):
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if scale < 1.0:
+            frame = cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
+        writer.write(frame)
+    cap.release()
+    writer.release()
 
 
 def find_runs(mask: np.ndarray) -> list[tuple[int, int]]:
@@ -81,6 +117,10 @@ def main() -> None:
     if not args.dry_run:
         out_dir.mkdir(parents=True, exist_ok=True)
 
+    use_ffmpeg = shutil.which("ffmpeg") is not None
+    if args.write_clips and not use_ffmpeg:
+        print("ffmpeg not found, writing clips with OpenCV (downscaled to 1280px)\n")
+
     for i, (s, e) in enumerate(episodes, start=1):
         s_pad = max(0, s - pad_f)
         e_pad = min(len(detected), e + pad_f)
@@ -109,12 +149,10 @@ def main() -> None:
             if not args.video:
                 raise SystemExit("--write-clips needs --video")
             dst = out_dir / f"ep_{i:03d}.mp4"
-            subprocess.run(
-                ["ffmpeg", "-v", "error", "-y", "-ss", f"{t0:.3f}",
-                 "-i", args.video, "-t", f"{dur:.3f}",
-                 "-c:v", "libx264", "-preset", "veryfast", "-an", str(dst)],
-                check=True,
-            )
+            if use_ffmpeg:
+                cut_with_ffmpeg(args.video, dst, t0, dur)
+            else:
+                cut_with_opencv(args.video, dst, s_pad, e_pad)
 
     if args.dry_run:
         print("\n(dry run, nothing written)")

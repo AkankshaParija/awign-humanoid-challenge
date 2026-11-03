@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hand", default="shadow_hand", help="menagerie folder name")
     ap.add_argument("--scene", default="sim/scene_cup.xml")
+    ap.add_argument("--hand-model", default="right_hand.xml")
     args = ap.parse_args()
 
     src = ROOT / args.scene
@@ -29,6 +31,18 @@ def main() -> None:
         sys.exit(f"missing {src}")
     if not hand_dir.is_dir():
         sys.exit(f"missing {hand_dir}. did you clone mujoco_menagerie?")
+
+    # the scene needs a hand that can move, so make the freejoint variant first
+    base = hand_dir / args.hand_model
+    if base.exists():
+        free = base.with_name(base.stem + "_free.xml")
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "make_free_hand.py"),
+             str(base), "--out", str(free)],
+            check=True,
+        )
+    else:
+        print(f"warning: {base} not found, skipping the freejoint step")
 
     dst = hand_dir / src.name
     shutil.copy2(src, dst)

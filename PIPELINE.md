@@ -56,11 +56,50 @@ Expect one episode per trial. Too few means your between-trial gaps were
 short, so lower `--min-gap`. Too many means a trial got cut in half, so
 raise it.
 
-## 5. Annotate phases
+## 5. Mark the trials by hand
 
-Label each episode with: reach, grasp, lift, place, release.
-Label Studio works, or a CSV of frame numbers if you want it done faster.
-The organisers said annotation quality matters, so do this properly.
+An episode can hold several pick-and-places: the hand releases the cup but
+stays in frame, so the hand-present gaps cannot separate them.
+
+Automatic segmentation from grasp aperture was tried and **does not work for
+this task**. A wrap-around cup grasp keeps the thumb roughly a cup-diameter
+from the fingers throughout, so the signal barely changes between an open hand
+near the cup and a hand holding it, and the thumb is usually occluded by the
+cup during the grasp anyway. `segment_trials.py` is kept in the repo for the
+record; `outputs/aperture.png` shows why it was abandoned. That is worth a
+line in the README under what did not work.
+
+So the events get marked directly, which is one pass and two keys per trial:
+
+```bash
+python scripts/annotate.py data/episodes data/annotations.csv
+```
+
+| key | action |
+|---|---|
+| space | play / pause |
+| `.` `,` | step one frame |
+| `>` `<` | jump ten frames |
+| `g` | mark grasp at this frame |
+| `r` | mark release, closing the trial |
+| `u` | undo the last mark |
+| `n` / `p` | next / previous clip |
+| `q` | save and quit |
+
+Mark the frame where the hand first closes on the cup (`g`) and the frame
+where it lets go (`r`). The CSV is written after every clip, so quitting and
+resuming is safe, and already-annotated clips are skipped on the next run.
+
+Then build the per-trial datasets:
+
+```bash
+python scripts/build_trials.py data/annotations.csv data/episodes data/trials
+```
+
+Each trial gets its keypoints, its grasp and release frames, and a per-frame
+phase label: reach, grasp, transport, release, retreat. The script prints the
+phase distribution, which is a good sanity check and a nice table for the
+README.
 
 ## 6. Build the sim scene
 
@@ -80,7 +119,44 @@ python scripts/inspect_model.py mujoco_menagerie/shadow_hand/right_hand.xml
 
 You need the joint names and ranges for the retargeter. Save the output.
 
+## 7. Retarget onto the Shadow hand
+
+Check what the script auto-detected before running it for real:
+
+```bash
+python scripts/retarget.py --model mujoco_menagerie/shadow_hand/right_hand.xml --probe
+```
+
+It prints the palm body, the fingertip body it picked per finger, and the
+joints it will optimise. If a finger is missing or the tip body looks wrong,
+say so before going further, the rest of the pipeline depends on this mapping.
+
+Then run it:
+
+```bash
+# one episode first
+python scripts/retarget.py data/trials/ep_001_t01.json outputs/qpos/ep_001_t01.json \
+    --model mujoco_menagerie/shadow_hand/right_hand.xml
+
+# then the rest
+python scripts/retarget.py data/trials outputs/qpos \
+    --model mujoco_menagerie/shadow_hand/right_hand.xml
+```
+
+Mean tip error is printed per episode. Single-digit mm is good; above about
+20mm something is off with the mapping or the keypoints.
+
+How it works: both hands are put into their own palm frame (wrist, index MCP,
+little MCP) so camera orientation and model conventions cancel out, leaving
+only pose shape. A bounded least-squares solve then finds the finger joints
+that place the robot fingertips on the scaled human targets, warm started
+from the previous frame for smoothness. The first frame gets a dedicated
+multi-restart solve with no smoothing term, which is the initialisation point
+DexMV's supplementary material raises.
+
+Wrist pose is not optimised, it comes straight from MediaPipe and is saved as
+`wrist_pos` / `wrist_quat` for the replay step to drive the free joint.
+
 ## Still to come
 
-- `retarget.py`: fit Shadow joint angles so its fingertips track yours
-- `replay.py`: drive the sim, contact-based grasp check, record GIFs
+- `replay.py`: drive the sim scene, fingertip-contact grasp check, record GIFs

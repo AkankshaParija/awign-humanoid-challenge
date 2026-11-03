@@ -3,6 +3,7 @@ mediapipe
 opencv-python
 numpy
 scipy
+matplotlib
 
 # annotation UI, install separately if it fights the other deps:
 #   pip install label-studio
