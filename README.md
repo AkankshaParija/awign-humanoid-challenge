@@ -49,19 +49,32 @@ the more honest number of the two.
 
 ## Results
 
-| Trial | Grasp registered | Cup moved | On sticky note |
+| Trial | Grasp registered | Max fingertips touching | Cup moved |
 |---|---|---|---|
-| `ep_007_t01` (good) | 31/71 frames, ≥2 fingertips | 10.4 cm | — |
-| `ep_019_t01` (good) | 57/157 frames, ≥2 fingertips | 5.2 cm | — |
-| `ep_033_t01` (good) | 34/111 frames, ≥2 fingertips | 1.5 cm | yes |
-| `ep_011_t02` (failure) | 0/176 frames | 0 cm | no |
+| `ep_035_t01` (good) | 66/140 frames, ≥2 fingertips | 3 | 2.0 cm |
+| `ep_021_t01` (good) | 66/136 frames, ≥2 fingertips | 3 | 6.5 cm |
+| `ep_013_t01` (good) | 60/193 frames, ≥2 fingertips | 3 | 1.8 cm |
+| `ep_011_t02` (failure) | 0/176 frames | 0 | 0 cm |
 
-Trimmed to each trial's annotated grasp-to-release window, with a live
-overlay of grasp status and fingertip contact count (`scripts/make_result_gifs.py`):
+The 3 good trials are the top 3 by frames with ≥2 fingertips touching the cup
+(ranked from `outputs/replay_summary.csv`, tie-broken by how many fingertips
+touch at once — 3-way contact beats a borderline 2). `ep_011_t02` is kept as
+the failure case because it is the one trial where fingertip contact never
+happens even once (max contacts = 0), the cleanest example of retargeting
+failing outright.
 
-![good trial, grasp succeeds, cup moves](docs/gifs/ep_007_t01.gif)
-![good trial, longer transport](docs/gifs/ep_019_t01.gif)
-![good trial, ends on the sticky note](docs/gifs/ep_033_t01.gif)
+Each GIF is phone footage with the MediaPipe landmarks drawn on it (left)
+synced frame-by-frame against the MuJoCo replay (right), trimmed to the
+annotated grasp-to-release window, with a live overlay of fingertip contact
+count and grasp status (`scripts/make_result_gifs.py`). The table and sticky
+note in the MuJoCo panel are staged under wherever that trial's hand actually
+moves — there's no camera-to-table calibration (see
+[Honest assessment](#honest-assessment)), so this is a staging choice to make
+the shot read as "hand over a table," not a claim about the real cup location:
+
+![good trial, grasp succeeds, cup moves](docs/gifs/ep_035_t01.gif)
+![good trial, sustained grasp](docs/gifs/ep_021_t01.gif)
+![good trial, longest sustained contact](docs/gifs/ep_013_t01.gif)
 ![failure case, fingertips never close on the cup](docs/gifs/ep_011_t02.gif)
 
 Across all 63 trials, replayed in the MuJoCo scene with real fingertip-contact

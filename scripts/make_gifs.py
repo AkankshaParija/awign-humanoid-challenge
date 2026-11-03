@@ -37,6 +37,14 @@ def mp4_to_gif(src: Path, dst: Path, stride: int = 2, max_width: int = 480,
     if not frames:
         raise SystemExit(f"no frames read from {src}")
 
+    # quantize every frame onto one shared adaptive palette instead of
+    # letting Pillow pick a fresh palette per frame: much smaller files for
+    # the same frame count/resolution, since the GIF format repeats the
+    # palette per frame otherwise.
+    palette_src = frames[len(frames) // 2].convert(
+        "P", palette=Image.ADAPTIVE, colors=200)
+    frames = [f.quantize(palette=palette_src) for f in frames]
+
     dst.parent.mkdir(parents=True, exist_ok=True)
     duration_ms = int(1000 / fps) * stride
     frames[0].save(dst, save_all=True, append_images=frames[1:],
