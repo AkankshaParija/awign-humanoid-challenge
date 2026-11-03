@@ -42,7 +42,7 @@ def mp4_to_gif(src: Path, dst: Path, stride: int = 2, max_width: int = 480,
     # the same frame count/resolution, since the GIF format repeats the
     # palette per frame otherwise.
     palette_src = frames[len(frames) // 2].convert(
-        "P", palette=Image.ADAPTIVE, colors=200)
+        "P", palette=Image.ADAPTIVE, colors=96)
     frames = [f.quantize(palette=palette_src) for f in frames]
 
     dst.parent.mkdir(parents=True, exist_ok=True)
