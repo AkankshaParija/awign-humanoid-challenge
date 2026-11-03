@@ -12,6 +12,41 @@ grasp detection.
 All data is mine: one continuous phone recording of my own hand, hand-split
 into 63 trials and hand-annotated frame-by-frame.
 
+## Honest assessment
+
+The hand motion is still not great. Mean fingertip error is 42mm, and for
+four of the five fingers it is 44-51mm, only the thumb is good (17.7mm).
+That is a real gap, not a rounding error, and I don't want to bury it.
+
+The main cause is camera occlusion, not a bug in the retargeting solve. One
+static phone camera means the cup blocks the view of the fingers wrapped
+around it during transport, and tracking quality drops right when it
+matters most. The thumb usually stays on the visible side of the grip in
+this camera angle, which is why it alone tracks well.
+
+I tried to fix this with temporal smoothing (Savitzky-Golay on the
+landmarks, then re-run through the same retargeting code). Jitter went
+down: mean joint velocity dropped about 6% and acceleration about 12%. But
+fingertip error stayed exactly the same, 42.0mm before and after, because
+smoothing cleans up noise, not a camera-angle bias. It also slightly hurt
+the contact-based grasp count (55/63 down to 51/63 kinematic, 31/63 down
+to 26/63 physics), because smoothing blunts the peak finger closure the
+contact check looks for. So I kept the original, unsmoothed data as the
+one used everywhere in this repo. Full numbers in
+[outputs/retarget_smoothed/NOTES.md](outputs/retarget_smoothed/NOTES.md).
+
+On the 55/63 grasp count: that number means the cup is seeded right at the
+hand's own fingertip position at the annotated grasp frame, then contact
+is tracked from there. It tells you the hand closes into a believable
+grip around a cup-sized object, it does not tell you the hand found the
+cup on its own in open space, because there's no camera-to-table
+calibration to check that against.
+
+Physics mode is weaker than kinematic mode, 31/63 grasps instead of 55/63,
+and the cup often gets knocked away instead of lifted. That's expected
+given a 42mm average grip error meeting real contact dynamics, and it's
+the more honest number of the two.
+
 ## Results
 
 | Trial | Grasp registered | Cup moved | On sticky note |
@@ -20,6 +55,9 @@ into 63 trials and hand-annotated frame-by-frame.
 | `ep_019_t01` (good) | 57/157 frames, ≥2 fingertips | 5.2 cm | — |
 | `ep_033_t01` (good) | 34/111 frames, ≥2 fingertips | 1.5 cm | yes |
 | `ep_011_t02` (failure) | 0/176 frames | 0 cm | no |
+
+Trimmed to each trial's annotated grasp-to-release window, with a live
+overlay of grasp status and fingertip contact count (`scripts/make_result_gifs.py`):
 
 ![good trial, grasp succeeds, cup moves](docs/gifs/ep_007_t01.gif)
 ![good trial, longer transport](docs/gifs/ep_019_t01.gif)
@@ -86,7 +124,7 @@ MuJoCo scene: Shadow Hand + tapered cup  scripts/gen_scene.py, build_scene.py
 replay + fingertip-contact grasp check   scripts/replay.py
      │
      ▼
-GIFs of good trials + a failure case     scripts/make_gifs.py
+GIFs of good trials + a failure case     scripts/make_result_gifs.py
 ```
 
 ## Setup
@@ -124,11 +162,14 @@ python scripts/replay.py outputs/qpos \
     --scene mujoco_menagerie/shadow_hand/scene_cup.xml \
     --summary outputs/replay_summary.csv
 
-# 4. render a specific trial to video, then to GIF
+# 4. render a specific trial to video, then to GIF (generic, any trial)
 python scripts/replay.py outputs/qpos/ep_007_t01.json \
     --scene mujoco_menagerie/shadow_hand/scene_cup.xml \
     --out outputs/videos/ep_007_t01.mp4
 python scripts/make_gifs.py outputs/videos/ep_007_t01.mp4 docs/gifs/ep_007_t01.gif
+
+# 5. regenerate the 4 README gifs specifically (close camera, trimmed, overlay)
+python scripts/make_result_gifs.py
 ```
 
 `PIPELINE.md` has the full step-by-step from raw phone footage onward
@@ -193,6 +234,12 @@ for quality.
 - **Occlusion, not solver error, is the main source of inaccuracy** — see
   above. A second camera angle or markers on the fingers would likely fix
   this more than any change to the retargeting math.
+- **Temporal smoothing reduces jitter but not error.** See
+  [Honest assessment](#honest-assessment) and
+  [outputs/retarget_smoothed/NOTES.md](outputs/retarget_smoothed/NOTES.md)
+  for the full before/after numbers — the attempt is kept in the repo for
+  the record, but `outputs/qpos` (unsmoothed) is what everything else here
+  uses.
 
 ## What I'd do next
 
