@@ -2,10 +2,13 @@
 __pycache__/
 .DS_Store
 *.pyc
-# raw footage is large: commit only data/sample/
+# raw footage and derived video clips are large: commit only data/sample/,
+# data/trials/ (JSON only) and data/annotations.csv
 data/keypoints/
 data/raw/
+data/episodes/*.mp4
 models/*.task
 mujoco_menagerie/
 outputs/
 venv/
+MUJOCO_LOG.TXT
