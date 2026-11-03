@@ -1,6 +1,8 @@
 # Cup pick-and-place → Shadow Hand, from my own phone footage
 
-Awign x Armature AI Labs humanoid challenge submission. Phone video of me
+**Akanksha Parija** — Awign x Armature AI Labs Humanoid Challenge submission.
+
+Phone video of me
 picking up a cup and placing it on a sticky note (and back) drives a
 [Shadow Hand](https://github.com/google-deepmind/mujoco_menagerie/tree/main/shadow_hand)
 (floating wrist) in MuJoCo, via hand-pose extraction → manual event
@@ -28,9 +30,13 @@ Across all 63 trials, replayed in the MuJoCo scene with real fingertip-contact
 detection (no scripted "holding" flag):
 
 - **55/63** trials register a grasp (≥2 fingertips touching the cup at some
-  point).
+  point). The cup is initialised at each trial's own annotated grasp frame,
+  positioned at that frame's fingertip centroid — not at a real,
+  independently-measured location — so this number validates hand shape and
+  finger closure around a cup-sized object, not object localisation.
 - **7/63** end with the cup within one sticky-note-width of the target
-  location (heuristic — see [Limitations](#limitations)).
+  location (heuristic — see [Limitations](#limitations); there is no
+  camera-to-table calibration, so placement accuracy itself is not measured).
 - The 8 trials with zero grasp frames are exactly the trials with the worst
   retargeting error (mean 35–76mm vs. the 42mm overall average) — the
   fingertips simply never get close enough to the cup for the
@@ -47,7 +53,7 @@ detection (no scripted "holding" flag):
 | Other 4 fingers, mean | 48.1 mm |
 | Error vs. trial length, correlation (r) | 0.64 |
 
-The thumb tracks far better than the other fingers (17.7mm vs ~48mm) even
+The thumb tracks far better than the other fingers (17.7mm vs. 44-51mm) even
 though it has the least room for error during a wrap grip — see
 [Occlusion analysis](#occlusion-analysis).
 
@@ -95,8 +101,9 @@ git clone https://github.com/google-deepmind/mujoco_menagerie.git
 
 `mujoco_menagerie/` and the raw video/keypoint intermediates are not
 committed (see `.gitignore`) — `data/trials/` (the per-trial datasets) and
-`outputs/qpos/` (retargeted joint angles) are what everything downstream
-actually needs, and those are small enough to keep.
+`outputs/qpos/` (retargeted joint angles, already computed) are small
+enough to keep and are committed, so replay works right after cloning
+without re-running the retargeter.
 
 No ffmpeg is used anywhere; video I/O goes through OpenCV, GIFs through
 Pillow.
@@ -131,7 +138,8 @@ and what to look for at each step.
 ## Occlusion analysis
 
 Fingertip error correlates with trial length (r = 0.64) and the thumb tracks
-far better than the other four fingers (17.7mm vs. 44–50mm). Both point at
+far better than the other four fingers (17.7mm vs. 44–51mm, per-finger means:
+index 44.4, middle 47.4, ring 50.5, little 50.2). Both point at
 the same cause: during transport, the cup itself occludes the camera's view
 of the fingers wrapped around it, and MediaPipe's detection confidence (and
 accuracy) drops. The thumb is usually on the near/visible side of the grip in

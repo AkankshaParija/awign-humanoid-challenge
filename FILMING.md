@@ -1,5 +1,12 @@
 # Filming checklist
 
+This was the pre-filming plan, written before recording. The ArUco marker
+and `data/setup.md` calibration below were **not** actually captured during
+filming — see the README's Limitations section for what that means for the
+replay results (no camera-to-table calibration, so object placement in the
+sim scene is not independently measured). Kept here as the original plan,
+not as a description of what the committed data actually contains.
+
 Target: ~30 clips, 5 to 10 seconds each. About 40 minutes of work.
 
 ## Fixed setup (do not move anything once you start)
