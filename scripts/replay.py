@@ -7,10 +7,13 @@ closed".
 
 Two modes:
 
-  kinematic (default)  the hand is placed exactly where the data says, and
-                       the cup is attached to the hand while fingertip
-                       contact holds. Always produces a clean video, and is
-                       what you want for showing the retargeting itself.
+  kinematic (default)  the hand is placed exactly where the data says. Once
+                       >=2 fingertips touch the cup it is attached: held
+                       fixed in the palm frame at the offset that
+                       minimises hand-cup penetration over the attached
+                       frames (scripts/attach_fit.py), until the annotated
+                       release frame. This does not resolve collisions; the
+                       remaining penetration is reported per trial.
 
   physics              the cup is left to the simulator and is only moved by
                        contact forces. Honest, and more likely to drop the
@@ -39,6 +42,7 @@ from config import CUP_BOTTOM_RADIUS, STICKY_NOTE_SIDE  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import wrist_traj  # noqa: E402
+import attach_fit  # noqa: E402
 
 TIP_BODY_HINT = "distal"
 # "on the sticky note" = cup center within the note's half-side plus the
@@ -165,7 +169,8 @@ class Replayer:
         return np.mean([self.data.xpos[i] for i in sorted(self.tips)], axis=0)
 
     def run(self, rec: dict, out_path: Path | None,
-            cup_start: np.ndarray | None = None) -> dict:
+            cup_start: np.ndarray | None = None,
+            release_frame: int | None = None) -> dict:
         qpos = np.array(rec["qpos"])
         qadr = self.scene_qpos_adr(rec)
         wrist_pos = np.array(rec["wrist_pos"])
@@ -187,7 +192,13 @@ class Replayer:
                       if self.sticky_note_body >= 0 else None)
 
         frames, contacts, held = [], [], False
-        grip_offset = None
+        fit, attached_once = None, False
+        release_at = n if release_frame is None else release_frame
+        geoms = attach_fit.HandCupGeoms(self.model)
+        pens, tips2 = [], []
+
+        def set_hand(k: int) -> None:
+            self._apply_pose(qadr, qpos[k], wrist_pos[k], wrist_quat[k], hand_free_adr)
 
         for t in range(n):
             self._apply_pose(qadr, qpos[t], wrist_pos[t], wrist_quat[t],
@@ -199,21 +210,30 @@ class Replayer:
             contacts.append(ncon)
 
             if self.mode == "kinematic":
-                palm = self.data.xpos[self.cup_body]
-                if ncon >= 2 and not held:
-                    held = True
-                    tip_mean = np.mean(
-                        [self.data.xpos[i] for i in sorted(self.tips)], axis=0)
-                    grip_offset = self.data.qpos[
-                        self.cup_qadr:self.cup_qadr + 3] - tip_mean
-                elif ncon < 1 and held:
-                    held = False
-                if held and grip_offset is not None:
-                    tip_mean = np.mean(
-                        [self.data.xpos[i] for i in sorted(self.tips)], axis=0)
-                    self.data.qpos[self.cup_qadr:self.cup_qadr + 3] = \
-                        tip_mean + grip_offset
+                if ncon >= 2 and not attached_once and t < release_at:
+                    # attach once: fit the palm-frame cup offset over the
+                    # frames from here to the release frame
+                    held = attached_once = True
+                    start_p, start_q = attach_fit.cup_offset_now(
+                        self.data, geoms, self.cup_qadr)
+                    cup_now = self.data.qpos[self.cup_qadr:self.cup_qadr + 7].copy()
+                    fit = attach_fit.fit_offset(self.model, self.data, geoms,
+                                                self.cup_qadr, set_hand,
+                                                list(range(t, release_at)),
+                                                start_p, start_q)
+                    # fit_offset posed other frames: put frame t back
+                    set_hand(t)
+                    self.data.qpos[self.cup_qadr:self.cup_qadr + 7] = cup_now
                     mujoco.mj_forward(self.model, self.data)
+                elif held and t >= release_at:
+                    held = False          # released: the cup stays where it is
+                if held:
+                    attach_fit.place_cup_in_palm(self.model, self.data, geoms,
+                                                 self.cup_qadr, fit["offset_pos"],
+                                                 fit["offset_quat"])
+                    mujoco.mj_forward(self.model, self.data)
+                    pens.append(geoms.penetration(self.data) * 1000)
+                    tips2.append(geoms.tips_touching(self.data) >= 2)
             else:
                 mujoco.mj_step(self.model, self.data)
 
@@ -240,6 +260,11 @@ class Replayer:
             "cup_end": cup_end.tolist(),
             "on_sticky_note": on_sticky_note,
             "mode": self.mode,
+            # kinematic attach only: hand-cup penetration over attached frames
+            "attached_frames": len(pens),
+            "pen_mean_mm": float(np.mean(pens)) if pens else "",
+            "pen_max_mm": float(np.max(pens)) if pens else "",
+            "frames_2tips_within_5mm": int(sum(tips2)),
         }
 
 
@@ -293,17 +318,18 @@ def main() -> None:
             out = Path(args.out)
             out_path = (out / (f.stem + ".mp4")) if src.is_dir() else out
 
-        cup_start = None
+        cup_start, release_frame = None, None
         trial_path = trials_dir / f"{f.stem}.json"
         if trial_path.exists():
             meta = json.loads(trial_path.read_text())
             if args.wrist != "raw":
                 rec = wrist_traj.to_sim(rep, rec, meta, translate=args.wrist == "image")
             grasp_frame = meta.get("grasp_frame")
+            release_frame = meta.get("release_frame")
             if grasp_frame is not None and 0 <= grasp_frame < len(rec["qpos"]):
                 cup_start = rep.tip_centroid_at_frame(rec, grasp_frame)
 
-        res = rep.run(rec, out_path, cup_start=cup_start)
+        res = rep.run(rec, out_path, cup_start=cup_start, release_frame=release_frame)
         res["trial"] = f.stem
         res["wrist"] = args.wrist
         rows.append(res)

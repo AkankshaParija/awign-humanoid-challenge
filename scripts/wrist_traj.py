@@ -57,6 +57,11 @@ KNUCKLE_WIDTH_M = 0.075           # typical adult index MCP -> little MCP
 GRASP_WRIST_ANCHOR = np.array([0.0, 0.0, 0.6])
 SMOOTH_WINDOW = 9                 # frames (~0.3 s) for x, y
 DEPTH_SMOOTH_WINDOW = 15          # frames (~0.5 s): depth is the noisiest part
+# Depth wobble clamp: within one trial the hand stays roughly the same
+# distance from the phone (the cup moves sideways across the table, ~20 cm),
+# so depth is clipped to the trial's median depth +-8 cm before smoothing.
+# This is an assumption about the task, not a measurement.
+DEPTH_CLAMP_M = 0.08
 
 WRIST, INDEX_MCP, MIDDLE_MCP, LITTLE_MCP = 0, 5, 9, 17   # MediaPipe landmark indices
 
@@ -82,6 +87,8 @@ def wrist_in_camera(image_lm: np.ndarray) -> np.ndarray:
     z_bone = FOCAL_PX * WRIST_TO_MCP_M / bone_px(WRIST, MIDDLE_MCP)
     z_knuckles = FOCAL_PX * KNUCKLE_WIDTH_M / bone_px(INDEX_MCP, LITTLE_MCP)
     z = np.minimum(z_bone, z_knuckles)
+    z_med = np.median(z)
+    z = np.clip(z, z_med - DEPTH_CLAMP_M, z_med + DEPTH_CLAMP_M)
     z = moving_average(z[:, None], DEPTH_SMOOTH_WINDOW)[:, 0]
     u, v = px[:, WRIST, 0], px[:, WRIST, 1]
     x = (u - IMAGE_W / 2) * z / FOCAL_PX
