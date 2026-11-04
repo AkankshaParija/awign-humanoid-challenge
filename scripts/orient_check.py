@@ -1,8 +1,8 @@
 """orient-fix STEP 2: check the data-driven hand orientation against the phone.
 
 A virtual pinhole camera is put exactly where the phone is in sim
-coordinates (wrist_traj.to_sim_palm's phone_cam_pos_sim), looking along sim
-+y with z up, with the same assumed focal length (924 px at 1280x720). If
+coordinates (wrist_traj.to_sim_palm's phone_cam_pos_sim), looking the way
+the phone looks (wrist_traj.phone_view_angles), with the same assumed focal length (924 px at 1280x720). If
 the orientation is right, the sim hand should land on top of my real hand.
 
 Reports, over every frame of every trial:
@@ -84,8 +84,9 @@ def render_phone_view(rep, renderer, seg, hand_geoms, res: dict, t: int) -> tupl
     pose(rep, rec, rep.scene_qpos_adr(rec), rep._hand_free_adr(), t)
     vcam = mujoco.MjvCamera()
     vcam.type = mujoco.mjtCamera.mjCAMERA_FREE
-    vcam.lookat[:] = cam + np.array([0.0, 1.0, 0.0])    # 1 m straight ahead (+y)
-    vcam.distance, vcam.azimuth, vcam.elevation = 1.0, 90.0, 0.0
+    az, el = W.phone_view_angles()                       # the phone's own viewing direction
+    vcam.lookat[:] = cam + W.CAM_TO_SIM @ np.array([0.0, 0.0, 1.0])   # 1 m along it
+    vcam.distance, vcam.azimuth, vcam.elevation = 1.0, az, el
     renderer.update_scene(rep.data, vcam)
     rgb = renderer.render().copy()
     seg.update_scene(rep.data, vcam)

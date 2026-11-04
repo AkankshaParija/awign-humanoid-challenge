@@ -96,6 +96,15 @@ LOOKAT_SMOOTH = 0.3                   # EMA weight on the new palm position per 
 # Set by --wrist; "image" is the default, "rotate-only" is the old
 # rotate-in-place behaviour, for comparison.
 WRIST_MODE = "image"
+# Hand orientation: "knuckle" = per-trial knuckle-line-vertical rotation
+# (main); "palm" = palm frame from the image landmarks with one fixed
+# camera->sim rotation (orient-fix), viewed with PHONE_VIEW_* below.
+ORIENT_MODE = "knuckle"
+# phone-view camera for --orient palm: the phone's own viewing direction
+# (from the measured CAM_TO_SIM), following the palm at a fixed distance so
+# the hand is readable
+PHONE_VIEW_AZIMUTH, PHONE_VIEW_ELEVATION = wrist_traj.phone_view_angles()
+PHONE_VIEW_DISTANCE = 0.5
 
 LEAD = 15        # frames of approach shown before the annotated grasp
 AFTER = 15       # frames shown after the annotated release
@@ -319,8 +328,11 @@ def render_trial(rep: Replayer, trial: str, hand_geoms: list[int],
                  table_body: int, sticky_body: int, palm_body: int) -> dict:
     meta_t = json.loads((TRIALS_DIR / f"{trial}.json").read_text())
     grasp_f, release_f = meta_t["grasp_frame"], meta_t["release_frame"]
-    rec = wrist_traj.to_sim(rep, json.loads((QPOS_DIR / f"{trial}.json").read_text()),
-                            meta_t, translate=WRIST_MODE == "image")
+    raw = json.loads((QPOS_DIR / f"{trial}.json").read_text())
+    if ORIENT_MODE == "palm":
+        rec = wrist_traj.to_sim_palm(rep, raw, meta_t)
+    else:
+        rec = wrist_traj.to_sim(rep, raw, meta_t, translate=WRIST_MODE == "image")
     n_total = len(rec["qpos"])
     lo = max(0, grasp_f - LEAD)
     hi = min(n_total, release_f + AFTER + 1)
@@ -369,8 +381,10 @@ def render_trial(rep: Replayer, trial: str, hand_geoms: list[int],
             break
 
     rep.cam.distance = CAM_DISTANCE
-    rep.cam.azimuth = CAM_AZIMUTH
-    rep.cam.elevation = CAM_ELEVATION
+    rep.cam.azimuth = CAM_AZIMUTH if ORIENT_MODE == "knuckle" else PHONE_VIEW_AZIMUTH
+    rep.cam.elevation = CAM_ELEVATION if ORIENT_MODE == "knuckle" else PHONE_VIEW_ELEVATION
+    if ORIENT_MODE == "palm":
+        rep.cam.distance = PHONE_VIEW_DISTANCE
 
     def simulate():
         """Yields (t, state) with the scene posed for frame t."""
@@ -519,15 +533,17 @@ def save_stills(res: dict, trial: str, out_dir: Path) -> None:
 
 
 def main() -> None:
-    global WRIST_MODE
+    global WRIST_MODE, ORIENT_MODE
     ap = argparse.ArgumentParser()
     ap.add_argument("--stills", type=Path, default=ROOT / "outputs/gif_stills",
                     help="scratch folder for 3 still frames per clip (not committed)")
     ap.add_argument("--trials", nargs="*", help="override the trial list (for trying candidates)")
     ap.add_argument("--gif-dir", type=Path, default=GIF_DIR)
     ap.add_argument("--wrist", choices=["image", "rotate-only"], default=WRIST_MODE)
+    ap.add_argument("--orient", choices=["knuckle", "palm"], default=ORIENT_MODE)
     args = ap.parse_args()
     WRIST_MODE = args.wrist
+    ORIENT_MODE = args.orient
 
     rep = Replayer(str(SCENE), mode="kinematic", width=MJ_W, height=MJ_H)
     hand_geoms = style_scene(rep.model)

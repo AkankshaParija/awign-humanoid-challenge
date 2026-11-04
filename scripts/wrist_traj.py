@@ -158,10 +158,29 @@ def to_sim(rep, rec: dict, trial_meta: dict, translate: bool = True) -> dict:
 # ---------------------------------------------------------------------------
 
 # OpenCV camera axes (x right, y down, z forward) -> sim axes (x right,
-# y forward, z up). Rows are the sim axes written in camera coordinates.
-CAM_TO_SIM = np.array([[1.0, 0.0, 0.0],
-                       [0.0, 0.0, 1.0],
-                       [0.0, -1.0, 0.0]])
+# y forward, z up), ONE fixed rotation for every clip. Sim "up" is the real
+# table normal, measured from the sticky note (a known 7.5 cm square) by
+# scripts/measure_table_plane.py: PnP in 6 clips, 0.6-2.1 px reprojection,
+# the phone looks 17.5 deg below horizontal. (A level-phone mapping was tried
+# first; with it the replayed hand drifts down through a level sim table.)
+TABLE_NORMAL_CAM = np.array([0.0548, -0.9519, -0.3015])
+
+
+def _cam_to_sim(up_cam: np.ndarray) -> np.ndarray:
+    z = up_cam / np.linalg.norm(up_cam)
+    x = np.array([1.0, 0.0, 0.0])
+    x = x - z * (x @ z)
+    x /= np.linalg.norm(x)
+    return np.stack([x, np.cross(z, x), z])           # rows = sim axes in camera coords
+
+
+CAM_TO_SIM = _cam_to_sim(TABLE_NORMAL_CAM)
+
+
+def phone_view_angles() -> tuple[float, float]:
+    """MuJoCo free-camera azimuth/elevation (deg) that look the way the phone does."""
+    f = CAM_TO_SIM @ np.array([0.0, 0.0, 1.0])        # camera forward, in sim axes
+    return float(np.degrees(np.arctan2(f[1], f[0]))), float(np.degrees(np.arcsin(f[2])))
 INDEX_MCP_, PINKY_MCP_ = 5, 17
 TIPS_ = [8, 12, 16, 20]
 ORIENT_SMOOTH_ALPHA = 0.5        # slerp weight per frame, run forwards then backwards
