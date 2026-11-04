@@ -30,8 +30,8 @@ landmarks, then re-run through the same retargeting code). Jitter went
 down: mean joint velocity dropped about 6% and acceleration about 12%. But
 fingertip error stayed exactly the same, 42.0mm before and after, because
 smoothing cleans up noise, not a camera-angle bias. The contact-based grasp
-count barely moves (kinematic 63/63 both ways, physics 59/63 → 60/63, one
-trial). Since the accuracy number doesn't improve, I kept the original,
+count barely moves (kinematic 63/63 → 62/63, physics 62/63 → 61/63, one
+trial each). Since the accuracy number doesn't improve, I kept the original,
 unsmoothed data as the one used everywhere in this repo. Full numbers in
 [outputs/retarget_smoothed/NOTES.md](outputs/retarget_smoothed/NOTES.md).
 
@@ -141,47 +141,53 @@ diagnosis. Pinned joints could come from occluded, bad landmark targets or
 from a hand-size mismatch in the retargeting. I didn't investigate further
 here.
 
-### Qualitative replay with kinematic attach (orientation approximate)
+### Qualitative replay with kinematic attach (phone view)
 
 Each clip is phone footage with the MediaPipe landmarks drawn on it (left)
 synced frame-by-frame against the MuJoCo replay (right), rendered by
-`scripts/make_result_gifs.py`. It covers the annotated grasp-to-release
-span, with up to 15 frames before and after. The overlay shows the trial
-and frame, and while the cup is attached, "ATTACHED (kinematic)" with the
-live hand-cup penetration in mm.
+`scripts/make_result_gifs.py` from the phone's own viewing direction. It
+covers the annotated grasp-to-release span, with up to 15 frames before and
+after. The overlay shows the trial and frame, and while the cup is attached,
+"ATTACHED (kinematic)" with the live hand-cup penetration in mm.
 
 **Cup is attached to the fingertips by kinematic attach mode once ≥2
 fingertips touch it, and released at the annotated release frame. This is
 not physics-based carrying. Physics mode reaches ≥2 fingertip contacts in
-59/63 trials, but that counts contact, not a lift (see below).**
+62/63 trials, but that counts contact, not a lift (see below).**
 
-The hand's overall orientation in the sim is inferred from the knuckle line,
-not measured, so the hand pose relative to the cup is only approximate. The
-grasp shape and contact counts are the meaningful part.
+The hand's orientation comes from the data: the palm frame in the image
+landmarks, through one fixed camera-to-sim rotation (see
+[Hand orientation](#hand-orientation)). The hand's position is the
+approximate image-based trajectory, so the pose relative to the cup is
+still approximate. The grasp shape and contact counts are the meaningful
+part.
 
-#### `ep_047_t01` — clean case: penetration 0.0 mm mean, 0.2 mm max
+#### `ep_015_t01` — clean case: penetration 0.1 mm mean, 0.4 mm max
 
-This is a **side pinch, not a full wrap**: the cup sits against the side of
-the fingers (flexion 0.29), with ≥2 fingertips within 5 mm in 89% of
-attached frames. Attached from frame 2 (the clip's first frame) to the
-annotated release at frame 85; the annotated grasp is frame 17.
+This is a **flat-hand contact with nearly straight fingers**, not a wrap:
+mean finger flexion at the grasp is 0.04 of joint range, so the cup rests
+against flat fingers. ≥2 fingertips are within 5 mm of the cup in 97% of
+the 118 attached frames. Attached from frame 0 (before the clip's first
+frame) to the annotated release at frame 118; the annotated grasp is
+frame 17.
 
-![ep_047_t01: phone footage with MediaPipe landmarks next to the MuJoCo replay; a side pinch carries the attached cup across the table, penetration 0.0 mm mean, 0.2 mm max](docs/gifs/ep_047_t01.gif)
+![ep_015_t01: phone footage with MediaPipe landmarks next to the phone-view MuJoCo replay; flat, nearly straight fingers carry the attached cup, penetration 0.1 mm mean, 0.4 mm max](docs/gifs/ep_015_t01.gif)
 
-#### `ep_026_t01` — typical case: penetration 9.3 mm mean, 15.4 mm max
+#### `ep_017_t01` — typical case: penetration 4.1 mm mean, 13.2 mm max
 
-This shows **typical residual overlap**: the fingers are curled (flexion
-0.48) and visibly sink into the cup, and ≥2 fingertips are within 5 mm in
-96% of attached frames. Its penetration is close to the all-trial average
-(10.2 mm mean). Attached from frame 3 to the annotated release at frame
-137; the annotated grasp is frame 17.
+This shows the **typical curled grasp with residual overlap**: the fingers
+are curled (flexion 0.55) and sink into the cup in some frames, and ≥2
+fingertips are within 5 mm in 92% of the 121 attached frames. (Over just
+the frames shown in the clip, the mean is 4.2 mm and 93%.) Attached from
+frame 0 to the annotated release at frame 121; the annotated grasp is
+frame 17.
 
-![ep_026_t01: phone footage with MediaPipe landmarks next to the MuJoCo replay; curled fingers carry the attached cup with visible residual finger-cup overlap, penetration 9.3 mm mean, 15.4 mm max](docs/gifs/ep_026_t01.gif)
+![ep_017_t01: phone footage with MediaPipe landmarks next to the phone-view MuJoCo replay; curled fingers carry the attached cup with some residual overlap, penetration 4.1 mm mean, 13.2 mm max](docs/gifs/ep_017_t01.gif)
 
 There is no failure clip. Every trial reaches ≥2 fingertip contacts in
 kinematic mode, so there is no honest "contact never happens" kinematic
-case left to show. The four trials that never reach ≥2 contacts in physics
-mode are `ep_018_t03`, `ep_030_t01`, `ep_042_t01` and `ep_045_t01`.
+case left to show. The one trial that never reaches ≥2 contacts in physics
+mode is `ep_034_t02`.
 
 #### How the attach works, and residual penetration
 
@@ -199,16 +205,14 @@ Residual penetration over the attached frames of all 63 trials (deepest
 overlap between any hand collision geom and the cup, per frame, from
 `mj_geomDistance`; in `outputs/replay_summary.csv`):
 
-| | Mean | Worst frame | Median per-trial max | ≥2 fingertips within 5 mm |
-|---|---|---|---|---|
-| Before the fit (old attach, cup at a fixed offset from the fingertip centroid) | 14.8 mm | 35.6 mm | 23.1 mm | 83% of frames |
-| **After the fit** | **10.2 mm** | **26.4 mm** | **17.0 mm** | **91% of frames** |
+| Mean | Worst frame | Median per-trial max | ≥2 fingertips within 5 mm |
+|---|---|---|---|
+| **9.7 mm** | **23.3 mm** | **16.7 mm** | **90% of frames** |
 
-Only 3 of 63 trials get below 5 mm max (`ep_047_t01`, `ep_035_t01`,
-`ep_024_t03`). The deepest overlaps are the ring and little fingers curling
-into the cup: the retargeted hand closes tighter than the cup is wide, so
-no single offset clears every finger. (The "before" row was measured with
-the same code on the previous attach mode, before this change.)
+Only 5 of 63 trials get below 5 mm max (`ep_015_t01`, `ep_024_t03`,
+`ep_029_t01`, `ep_030_t02`, `ep_047_t01`). The deepest overlaps are the
+ring and little fingers curling into the cup: the retargeted hand closes
+tighter than the cup is wide, so no single offset clears every finger.
 
 The hand moves across the table, not just rotating in place: its wrist
 trajectory is recovered approximately from the phone image (see
@@ -216,11 +220,12 @@ trajectory is recovered approximately from the phone image (see
 
 #### What the clips do not show
 
-- **The sticky note is staged.** There is no camera-to-table calibration,
-  so the table is placed under the cup's starting point and the sticky note
-  is drawn where the cup is released. The cup does not land on the real
-  sticky note's location.
-- **The travel distance is not measured.** The cup moves 22.2cm and 43.2cm
+- **The sticky note is staged.** There is no camera-to-table calibration of
+  the note's *position*, so the table is placed under the cup's starting
+  point and the sticky note is drawn where the cup is released. The cup
+  does not land on the real sticky note's location. (Only the table's
+  *tilt* is measured, see [Hand orientation](#hand-orientation).)
+- **The travel distance is not measured.** The cup moves 19.3cm and 21.1cm
   in these clips. Those distances scale directly with the assumed focal
   length and hand size, and the trajectory's error has not been measured,
   so they are not real distances. The direction is the trustworthy part
@@ -229,11 +234,6 @@ trajectory is recovered approximately from the phone image (see
   below the staged table top, and a cup held in the palm frame dips with
   it. The clips were chosen so the carried cup never sinks more than 1 cm
   into the table.
-- **"Up" is inferred.** The data is in the phone camera's axes. Each trial
-  is rotated once so the little→index knuckle line at the grasp frame is
-  vertical (in a side wrap grasp the cup's axis runs along it), so the cup
-  stands upright in the grip. `replay.py` uses the same rotation, so the
-  clips and the replay numbers come from the same hand pose.
 
 #### Checks and how the clips were chosen
 
@@ -260,27 +260,62 @@ Automatic checks on every frame of every clip:
   where it is placed, so each caption lists the attach, annotated grasp and
   annotated release frames.
 
-**Choosing the clips.** I checked all 32 to_target trials (camera-dependent
-visibility at the earlier camera angle). Only `ep_047_t01` passes every
-check including the 5 mm limit. I also measured how curled the fingers are
-at the annotated grasp frame: the mean of the non-thumb flexion joints
-(J1–J3), as a fraction of each joint's range. The median is 0.48. Many
-trials are much flatter than my real hand was: the first typical clip I
-picked, `ep_015_t01`, is at 0.04, with nearly straight fingers, even though
-my fingers clearly wrap the cup in the footage. That's the retargeting
-losing the curl, likely the same occlusion problem as the 42 mm error.
-`ep_026_t01` (flexion 0.48) is the only clearly curled trial whose cup
-never sinks into the table, so it is the typical case. `ep_047_t01` is
-flatter (0.29: index and middle nearly straight, ring and little bent),
-which is part of why it overlaps the cup so little.
+**Choosing the clips.** I rendered all 32 to_target trials with every check.
+30 pass the visibility check, 6 never sink the cup into the table, and only
+`ep_015_t01` passes every check including the 5 mm limit. I also measured
+how curled the fingers are at the annotated grasp frame: the mean of the
+non-thumb flexion joints (J1–J3), as a fraction of each joint's range. The
+median is 0.48. Many trials are much flatter than my real hand was:
+`ep_015_t01` is at 0.04, with nearly straight fingers, even though my
+fingers clearly wrap the cup in the footage. That's the retargeting losing
+the curl, likely the same occlusion problem as the 42 mm error, and it's
+part of why this trial overlaps the cup so little. `ep_017_t01`
+(flexion 0.55) has the lowest penetration of the clearly curled trials
+that pass every other check, so it is the typical case.
 
-**Camera.** One camera setting for every clip: elevation −60°, azimuth
-240°, 0.55 m from a look-at point that follows the palm. I compared
-grasp-frame stills from a side view (−10°), three-quarter (−30°) and
-slightly above (−60°). Because the knuckle line is set vertical, the
-fingers bend in the horizontal plane, so their curl shows best from above.
-The earlier angle (−50°, 150°) looked along the edge of the palm, which
-made the hand look flat. Both clips were re-checked at this final angle.
+**Camera.** One camera setting for every clip: the phone's own viewing
+direction (azimuth 89°, elevation −17.5°, from the measured camera-to-sim
+rotation), 0.5 m from a look-at point that follows the palm. It is closer
+than the real phone so the hand is readable, but it looks the same way.
+
+### Hand orientation
+
+The hand's orientation in the sim comes from the data, with no per-clip
+heuristic (`scripts/wrist_traj.py`, `to_sim_palm`):
+
+- **Palm frame from the image landmarks plus MediaPipe depth.** Per frame:
+  y = wrist → middle knuckle, x = little knuckle → index knuckle (made
+  orthogonal to y), z = x × y. The points are the image landmarks
+  back-projected with MediaPipe's per-landmark relative depth. The world
+  landmarks were tried first and aren't usable here: their palm normal
+  agreed with the image on which way the palm faces in only 56% of frames,
+  and a per-frame PnP fit of their 3D shape onto the image was no better
+  (48%). The image-based frame agrees in 99.3% of frames.
+- **One fixed camera-to-sim rotation for every clip, including the phone's
+  tilt.** The sticky note is a known 7.5 cm square on the table. Its four
+  corners, found by colour, and a PnP solve (0.6-2.1 px reprojection in 6
+  clips; `scripts/measure_table_plane.py`) give the table plane: the phone
+  looks 17.5° below horizontal (spread 0.8° across clips). Sim "up" is that
+  table normal.
+- **One fixed offset to the Shadow Hand**, from the model's own wrist and
+  knuckles built the same way. It's determined once, not per trial.
+- **Handedness check:** the fingertips sit on the palm (+z) side in 100% of
+  grasp frames, the same convention as the Shadow right hand, so my video
+  is a non-mirrored right hand and nothing is flipped.
+- Light forward-backward slerp smoothing on the rotation.
+
+Checked against the phone with a virtual camera placed where the phone is
+(`scripts/orient_check.py`), over all 63 trials (7392 frames):
+
+| | Mean | Median | p95 | Max |
+|---|---|---|---|---|
+| Palm normal, sim vs landmarks | 3.5° | 0.5° | 25.6° | 57.7° |
+| Wrist + 4 knuckles reprojected vs MediaPipe | 34.9 px | 33.0 px | 61.9 px | 181.6 px |
+
+Two things inflate these numbers. The Shadow palm is larger than the
+assumed 9.5 cm hand (wrist → knuckles 12.8 cm), so its knuckles land
+further out than mine. And the smoothing lags fast wrist turns, which is
+where the large angles are.
 
 ### Which number comes from where
 
@@ -288,16 +323,16 @@ made the hand look flat. Both clips were re-checked at this final angle.
 |---|---|---|
 | **42.0mm** mean fingertip error | `retarget.py` → `outputs/retarget_summary.csv` | How far the robot fingertips are from my (scaled) fingertips. The real accuracy number. |
 | **63/63** trials with ≥2 fingertips on the cup | `replay.py --mode kinematic` → `outputs/replay_summary.csv` | Weak: the cup is placed at the hand's own fingertip centroid at the annotated grasp frame, so this mostly shows the fingertips close around that spot. Not object localisation. |
-| **10.2 mm** mean, **26.4 mm** worst hand-cup penetration | `replay.py --mode kinematic` → `outputs/replay_summary.csv` (`pen_mean_mm`, `pen_max_mm`) | Residual overlap after the attach fit, over all attached frames. |
-| **59/63** trials with ≥2 fingertips on the cup | `replay.py --mode physics` → `outputs/replay_summary_physics.csv` | Same seeding, but the cup is moved only by contact forces and gravity. It's the more meaningful replay number, and it counts contact at some frame, not a held lift: the median trial has ≥2-tip contact in 15% of its frames. |
-| **5/63** (kinematic), **0/63** (physics) cup ends on the sticky note | both replay modes | Placeholder target, no calibration: meaningless, see Limitations. |
+| **9.7 mm** mean, **23.3 mm** worst hand-cup penetration | `replay.py --mode kinematic` → `outputs/replay_summary.csv` (`pen_mean_mm`, `pen_max_mm`) | Residual overlap after the attach fit, over all attached frames. |
+| **62/63** trials with ≥2 fingertips on the cup | `replay.py --mode physics` → `outputs/replay_summary_physics.csv` | Same seeding, but the cup is moved only by contact forces and gravity. It's the more meaningful replay number, and it counts contact at some frame, not a held lift: the median trial has ≥2-tip contact in 22% of its frames. |
+| **0/63** cup ends on the sticky note (both modes) | both replay modes | Placeholder target, no calibration: meaningless, see Limitations. |
 | GIF clips | `make_result_gifs.py` (same attach and fit as kinematic mode, released at the annotated frame) | Illustration. The penetration in each caption is measured on that clip's own frames and matches its row in `replay_summary.csv`. |
 
-All replay numbers use the approximate wrist trajectory (`--wrist image`,
-the default). Both counts are near the ceiling because of the seeding. The
+All replay numbers use the approximate wrist trajectory and the
+data-driven hand orientation (`--wrist image --orient palm`, the defaults). Both counts are near the ceiling because of the seeding. The
 real difference shows in how long contact lasts: kinematic mode holds the
 cup in the palm once it is touched, while in physics, with an imprecise
-grip (~42mm error), ≥2-tip contact holds for a median 15% of frames.
+grip (~42mm error), ≥2-tip contact holds for a median 22% of frames.
 
 A note on "contact": every geom has a contact margin of 0, so MuJoCo only
 reports a fingertip contact while the fingertip actually penetrates the
@@ -330,7 +365,8 @@ pinhole model:
   before smoothing. This cut the median per-trial depth range from about
   30 cm to 16 cm.
 - Lightly smoothed (moving average, 9 frames for x/y, 15 for depth) and
-  rotated with the same knuckle-up rotation. The model's wrist body (not
+  rotated with the same fixed camera-to-sim rotation as the orientation
+  (see [Hand orientation](#hand-orientation)). The model's wrist body (not
   the forearm origin 21 cm behind it) is put on the estimated wrist.
 - **Floor anchor (an assumption):** at about 0.7 m from the lens, the
   rotated trajectory lands under the sim floor. So each trial is shifted by
@@ -465,18 +501,18 @@ and what to look for at each step.
   `replay.py` starts each trial's cup at the hand's own fingertips at the
   annotated grasp frame, so contact detection has something real to report,
   but the cup never ends within a sticky-note width of the placeholder
-  target (5/63 kinematic, 0/63 physics), which says nothing about real-world
+  target (0/63 in both modes), which says nothing about real-world
   placement accuracy.
 - **The grasp counts are seeded.** Because the cup starts at the fingertip
   centroid, ≥2-fingertip contact is close to guaranteed in kinematic mode
   (63/63). The kinematic mode holds the cup in the palm once ≥2 fingertips
   touch it; `--mode physics` leaves the cup to MuJoCo's contact solver
-  instead (59/63 reach contact, median 15% of frames in contact). Neither
+  instead (62/63 reach contact, median 22% of frames in contact). Neither
   is evidence of a stable, physically held lift.
 - **Kinematic attach does not resolve collisions.** The fingers come from a
   human hand retargeted onto a different hand, and the residual hand-cup
-  penetration is 10.2 mm mean and 26.4 mm max over all attached frames
-  (only 3/63 trials are below 5 mm max).
+  penetration is 9.7 mm mean and 23.3 mm max over all attached frames
+  (only 5/63 trials are below 5 mm max).
 - **Occlusion, not solver error, is the main source of inaccuracy** — see
   above. A second camera angle or markers on the fingers would likely fix
   this more than any change to the retargeting math.
@@ -495,8 +531,9 @@ and what to look for at each step.
   table) so the wrist trajectory has a measured error and real distances,
   and constrain the replayed hand to stay above the table.
 - Calibrate the phone camera against the real table/cup/sticky-note layout
-  so "on sticky note" becomes a real spatial check instead of a heuristic,
-  and "up" is measured rather than inferred from the grip.
+  so "on sticky note" becomes a real spatial check instead of a heuristic.
+  The table's tilt is already measured from the sticky note; its position
+  isn't.
 - Policy training on top of the retargeted demonstrations (not attempted
   here, per the challenge's own phasing — this submission is the data
   pipeline and simulated replay, not an RL policy).

@@ -297,6 +297,11 @@ def main() -> None:
                          "recovered from the image landmarks (scripts/wrist_traj.py); "
                          "'rotate-only' = hand-centred, rotates in place, same "
                          "knuckle-up frame; 'raw' = the old camera-axes pose")
+    ap.add_argument("--orient", choices=["knuckle", "palm"], default="palm",
+                    help="hand orientation with --wrist image: 'palm' (default) = "
+                         "palm frame from the image landmarks, one fixed camera->sim "
+                         "rotation incl. the measured phone tilt (wrist_traj.to_sim_palm); "
+                         "'knuckle' = the old per-trial knuckle-line-vertical heuristic")
     args = ap.parse_args()
 
     src = Path(args.qpos)
@@ -322,7 +327,9 @@ def main() -> None:
         trial_path = trials_dir / f"{f.stem}.json"
         if trial_path.exists():
             meta = json.loads(trial_path.read_text())
-            if args.wrist != "raw":
+            if args.wrist == "image" and args.orient == "palm":
+                rec = wrist_traj.to_sim_palm(rep, rec, meta)
+            elif args.wrist != "raw":
                 rec = wrist_traj.to_sim(rep, rec, meta, translate=args.wrist == "image")
             grasp_frame = meta.get("grasp_frame")
             release_frame = meta.get("release_frame")
@@ -332,6 +339,7 @@ def main() -> None:
         res = rep.run(rec, out_path, cup_start=cup_start, release_frame=release_frame)
         res["trial"] = f.stem
         res["wrist"] = args.wrist
+        res["orient"] = args.orient
         rows.append(res)
         print(f"  {f.stem}: contacts<={res['max_fingertip_contacts']}  "
               f"grasped {res['frames_with_grasp']}/{res['n_frames']} frames  "

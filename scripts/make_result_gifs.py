@@ -21,9 +21,11 @@ table top is put under the cup's starting position; the sticky note is drawn
 where the cup is released. The clip does not show the cup landing on the
 real sticky note location.
 
-Camera: one fixed set of camera settings for every clip (distance,
-azimuth, elevation). Only the look-at point moves: it follows the palm
-(lightly smoothed) and is pulled halfway towards the cup.
+Camera: one fixed set of camera settings for every clip. By default
+(--orient palm) it looks the way the phone does (wrist_traj.phone_view_angles,
+from the measured camera->sim rotation) from a fixed distance; only the
+look-at point moves: it follows the palm (lightly smoothed) and is pulled
+halfway towards the cup.
 
 Automatic checks, printed per clip:
   * sim visibility: palm + 5 fingertips projected inside the image, and
@@ -82,20 +84,26 @@ TABLE_RGBA = [0.76, 0.63, 0.47, 1.0]  # tan
 TABLE_HALF_XY = (0.60, 0.60)          # bigger table top so a carried cup stays over it
 MJ_W, MJ_H = 560, 420                 # mujoco panel
 PHONE_SIDE = 420                      # phone panel: square crop, same height
+# camera for the old --orient knuckle mode only (kept for comparison)
 CAM_DISTANCE = 0.55                   # metres from the look-at point
 CAM_AZIMUTH = 240                     # degrees
-CAM_ELEVATION = -60                   # degrees. Chosen from grasp-frame stills of
-                                      # side (-10), three-quarter (-30) and above (-60)
-                                      # views: with the knuckle line vertical, fingers
-                                      # bend in the horizontal plane, so the curl shows
-                                      # from above; az 150 looked along the palm's edge
+CAM_ELEVATION = -60                   # degrees
 LOOKAT_SMOOTH = 0.3                   # EMA weight on the new palm position per frame
 
-# Hand root pose: scripts/wrist_traj.py (approximate wrist trajectory from
-# the image landmarks, rotated so the grasp's knuckle line is vertical).
-# Set by --wrist; "image" is the default, "rotate-only" is the old
-# rotate-in-place behaviour, for comparison.
+# Hand root position: scripts/wrist_traj.py (approximate wrist trajectory
+# from the image landmarks). Set by --wrist; "image" is the default,
+# "rotate-only" is the old rotate-in-place behaviour, for comparison.
 WRIST_MODE = "image"
+# Hand orientation: "palm" (default) = palm frame from the image landmarks
+# with one fixed camera->sim rotation incl. the measured phone tilt, viewed
+# with PHONE_VIEW_* below; "knuckle" = the old per-trial knuckle-line-vertical
+# heuristic, kept only for comparison.
+ORIENT_MODE = "palm"
+# phone-view camera for --orient palm: the phone's own viewing direction
+# (from the measured CAM_TO_SIM), following the palm at a fixed distance so
+# the hand is readable
+PHONE_VIEW_AZIMUTH, PHONE_VIEW_ELEVATION = wrist_traj.phone_view_angles()
+PHONE_VIEW_DISTANCE = 0.5
 
 LEAD = 15        # frames of approach shown before the annotated grasp
 AFTER = 15       # frames shown after the annotated release
@@ -123,6 +131,17 @@ MAX_PEN_MM_GIF = 5.0        # clips must have max hand-cup penetration below thi
 TRIALS = {
     "ep_047_t01": {"failure": False, "pen_limit": True},    # clean case, side pinch
     "ep_026_t01": {"failure": False, "pen_limit": False},   # typical case, residual overlap
+}
+
+# --orient palm clips (orient-fix), chosen the same way from all 32 to_target
+# trials surveyed with the data-driven orientation: ep_015_t01 is the only
+# trial passing every check including < 5 mm (0.1 / 0.4 mm), with nearly
+# straight fingers (flexion 0.04 at the grasp frame); ep_017_t01 is the
+# clearly curled trial (flexion 0.55) with the lowest penetration among
+# those passing every other check (4.2 / 13.2 mm).
+PALM_TRIALS = {
+    "ep_015_t01": {"failure": False, "pen_limit": True},    # clean case, flat-hand contact
+    "ep_017_t01": {"failure": False, "pen_limit": False},   # typical case, curled, residual overlap
 }
 
 HAND_CONNECTIONS = [
@@ -319,8 +338,11 @@ def render_trial(rep: Replayer, trial: str, hand_geoms: list[int],
                  table_body: int, sticky_body: int, palm_body: int) -> dict:
     meta_t = json.loads((TRIALS_DIR / f"{trial}.json").read_text())
     grasp_f, release_f = meta_t["grasp_frame"], meta_t["release_frame"]
-    rec = wrist_traj.to_sim(rep, json.loads((QPOS_DIR / f"{trial}.json").read_text()),
-                            meta_t, translate=WRIST_MODE == "image")
+    raw = json.loads((QPOS_DIR / f"{trial}.json").read_text())
+    if ORIENT_MODE == "palm":
+        rec = wrist_traj.to_sim_palm(rep, raw, meta_t)
+    else:
+        rec = wrist_traj.to_sim(rep, raw, meta_t, translate=WRIST_MODE == "image")
     n_total = len(rec["qpos"])
     lo = max(0, grasp_f - LEAD)
     hi = min(n_total, release_f + AFTER + 1)
@@ -369,8 +391,10 @@ def render_trial(rep: Replayer, trial: str, hand_geoms: list[int],
             break
 
     rep.cam.distance = CAM_DISTANCE
-    rep.cam.azimuth = CAM_AZIMUTH
-    rep.cam.elevation = CAM_ELEVATION
+    rep.cam.azimuth = CAM_AZIMUTH if ORIENT_MODE == "knuckle" else PHONE_VIEW_AZIMUTH
+    rep.cam.elevation = CAM_ELEVATION if ORIENT_MODE == "knuckle" else PHONE_VIEW_ELEVATION
+    if ORIENT_MODE == "palm":
+        rep.cam.distance = PHONE_VIEW_DISTANCE
 
     def simulate():
         """Yields (t, state) with the scene posed for frame t."""
@@ -519,21 +543,25 @@ def save_stills(res: dict, trial: str, out_dir: Path) -> None:
 
 
 def main() -> None:
-    global WRIST_MODE
+    global WRIST_MODE, ORIENT_MODE
     ap = argparse.ArgumentParser()
     ap.add_argument("--stills", type=Path, default=ROOT / "outputs/gif_stills",
                     help="scratch folder for 3 still frames per clip (not committed)")
     ap.add_argument("--trials", nargs="*", help="override the trial list (for trying candidates)")
     ap.add_argument("--gif-dir", type=Path, default=GIF_DIR)
     ap.add_argument("--wrist", choices=["image", "rotate-only"], default=WRIST_MODE)
+    ap.add_argument("--orient", choices=["knuckle", "palm"], default=ORIENT_MODE)
     args = ap.parse_args()
     WRIST_MODE = args.wrist
+    ORIENT_MODE = args.orient
 
     rep = Replayer(str(SCENE), mode="kinematic", width=MJ_W, height=MJ_H)
     hand_geoms = style_scene(rep.model)
     body = lambda n: mujoco.mj_name2id(rep.model, mujoco.mjtObj.mjOBJ_BODY, n)  # noqa: E731
 
-    trials = args.trials or list(TRIALS)
+    if ORIENT_MODE == "palm":
+        TRIALS.update(PALM_TRIALS)
+    trials = args.trials or list(PALM_TRIALS if ORIENT_MODE == "palm" else TRIALS)
     for trial in trials:
         TRIALS.setdefault(trial, {"failure": False, "pen_limit": True})
         res = render_trial(rep, trial, hand_geoms, body("table"),
