@@ -368,7 +368,7 @@ split into episodes (hand leaves frame) scripts/split_episodes.py
      │
      ▼
 manual grasp/release annotation         scripts/annotate.py
-     │  (63 trials: 32 to_target, 30 to_start; OpenCV keyboard tool,
+     │  (63 trials: 32 to_target, 30 to_start, 1 unclear; OpenCV keyboard tool,
      │   2 keystrokes per trial — g=grasp, r=release)
      ▼
 build per-trial datasets + phase labels  scripts/build_trials.py
@@ -386,6 +386,72 @@ replay + fingertip-contact grasp check   scripts/replay.py
      ▼
 GIFs (kinematic attach, visibility check) scripts/make_result_gifs.py
 ```
+
+## Repository structure
+
+```
+config.py                 measured cup and sticky note sizes, table height (one place for all of them)
+data/
+  annotations.csv         my hand-marked grasp and release frame for every trial
+  annotations_rejected.txt  episodes rejected while annotating (empty, none were)
+  episodes/*.json         MediaPipe landmarks per episode (the clips themselves aren't committed)
+  trials/*.json           the 63 trials: landmarks, grasp/release frames, phase labels, direction
+docs/figures/             the two README figures
+docs/gifs/                the two README clips
+outputs/
+  qpos/                   retargeted Shadow Hand joint angles per trial
+  retarget_summary.csv    per-trial fingertip error (the 42 mm number)
+  replay_summary*.csv     replay results, kinematic and physics
+  retarget_smoothed/      the smoothing experiment (kept for the record, not used elsewhere)
+sim/scene_cup.xml         table, tapered cup and sticky note scene (generated from config.py)
+scripts/
+  extract_hands.py        MediaPipe hand landmarks from the video
+  split_episodes.py       cut the long take into episodes where the hand leaves the frame
+  annotate.py             keyboard tool I used to mark grasp and release
+  build_trials.py         turn annotations + episodes into per-trial files
+  retarget.py             map my hand onto the Shadow Hand (vector retargeting)
+  gen_scene.py, build_scene.py, make_free_hand.py   build the MuJoCo scene
+  replay.py               replay trials in MuJoCo, kinematic or physics, writes the CSVs
+  wrist_traj.py           wrist position and hand orientation from the image landmarks
+  attach_fit.py           hand-cup penetration and the cup offset fit
+  measure_table_plane.py  phone tilt from the sticky note
+  orient_check.py         checks the sim hand against the phone view
+  make_result_gifs.py     the README clips
+  plot_figures.py         the README figures
+  smooth_landmarks.py, jitter.py, summarize.py   the smoothing experiment and summaries
+  segment_trials.py       automatic segmentation attempt that didn't work (see below)
+  make_finger_gifs.py     finger-only renders; orient_check.py reuses its helpers
+  handframe.py, inspect_model.py, render_hand.py, preview_keypoints.py, make_gifs.py   helpers
+PIPELINE.md               every step from raw footage, with commands
+FILMING.md                my filming plan from before recording
+```
+
+## Dataset
+
+Everything is mine. I filmed one continuous take on my phone: 8.3 minutes of
+4K video (3840x2160, 29.76 fps) of me moving a cup onto a sticky note and back,
+over and over. I split it into episodes and hand-annotated 63 trials: 32
+to_target (cup to the sticky note), 30 to_start (back again) and 1 where the
+direction was unclear.
+
+The raw video isn't in the repo. It's 2.5 GB, and it shows my face. The
+episode video clips and the raw keypoint files aren't committed either. What
+is committed:
+
+- `data/annotations.csv`: my grasp and release frames for every trial
+- `data/episodes/*.json`: the MediaPipe landmarks for each episode
+- `data/trials/*.json`: the 63 trials built from those
+- `outputs/qpos/`: the retargeted joint angles
+
+That's enough to rerun retargeting, replay and the figures right after
+cloning. The README clips need the episode videos for the phone side, so
+those only regenerate with the footage.
+
+To record your own: film one long take with a fixed phone, copy the original
+file to `data/raw/` (not through WhatsApp, it recompresses), then run
+extraction, splitting, annotation and trial building as in `PIPELINE.md`
+(steps 1 to 5). `extract_hands.py` needs MediaPipe's `hand_landmarker.task`
+model in `models/`, and tells you the download command if it's missing.
 
 ## Setup
 
@@ -443,6 +509,27 @@ python scripts/make_result_gifs.py
 (extraction, splitting, annotation, trial-building) with the exact commands
 and what to look for at each step.
 
+## Configuration
+
+`config.py` holds the sizes I measured with a ruler: the tapered cup (7.5 cm
+across the top, 4.5 cm across the bottom, 8 cm tall), the sticky note (7.5 cm
+square, 0.1 cm thick) and the sim table height. The scene and the scripts all
+read them from there, so change them once and rerun `gen_scene.py` and
+`build_scene.py`.
+
+The main flags:
+
+- `--orient palm|knuckle` (`replay.py`, `make_result_gifs.py`): hand
+  orientation. `palm` is the default and comes from the image landmarks (see
+  [Hand orientation](#hand-orientation)). `knuckle` is the old per-trial
+  heuristic, only kept for comparison.
+- `--wrist image|rotate-only|raw` (`replay.py`): hand position. `image` is the
+  default, the approximate trajectory from the image. `rotate-only` keeps the
+  hand in place and only rotates it, and `raw` is the original camera-axes pose.
+- `--smooth` (`retarget.py`, default 0.01): how strongly each frame's solve
+  is pulled toward the previous frame. The landmark smoothing experiment is a
+  separate script, `smooth_landmarks.py`.
+
 ## Limitations
 
 - **The wrist trajectory is a monocular approximation.** Depth comes from
@@ -491,6 +578,21 @@ and what to look for at each step.
 - Policy training on top of the retargeted demonstrations (not attempted
   here, per the challenge's own phasing — this submission is the data
   pipeline and simulated replay, not an RL policy).
+
+## Acknowledgements
+
+- [MuJoCo](https://github.com/google-deepmind/mujoco) for the simulation, and
+  [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) for
+  the Shadow Hand model.
+- [MediaPipe](https://github.com/google-ai-edge/mediapipe) for the hand
+  landmarks.
+- DexPilot, AnyTeleop and [dex-retargeting](https://github.com/dexsuite/dex-retargeting)
+  for the vector retargeting idea. I wrote my own solver following it, I don't
+  use the library.
+- DexMV, the closest prior work: turning human hand videos into robot hand
+  demonstrations. The landmark low-pass step and how the retargeting is
+  initialised follow it.
+- Claude (Claude Code) as a coding assistant, see below.
 
 ## How this was built
 
