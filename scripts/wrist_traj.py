@@ -149,3 +149,162 @@ def to_sim(rep, rec: dict, trial_meta: dict, translate: bool = True) -> dict:
         root[t] = wrist_sim[t] - Rq.reshape(3, 3) @ offset
     out["wrist_pos"] = root.tolist()
     return out
+
+
+# ---------------------------------------------------------------------------
+# Orientation from data (orient-fix): the palm frame from MediaPipe's world
+# landmarks, one fixed camera->sim rotation for all clips, one fixed
+# MediaPipe-palm -> Shadow-palm offset. No per-clip heuristic.
+# ---------------------------------------------------------------------------
+
+# OpenCV camera axes (x right, y down, z forward) -> sim axes (x right,
+# y forward, z up). Rows are the sim axes written in camera coordinates.
+CAM_TO_SIM = np.array([[1.0, 0.0, 0.0],
+                       [0.0, 0.0, 1.0],
+                       [0.0, -1.0, 0.0]])
+INDEX_MCP_, PINKY_MCP_ = 5, 17
+TIPS_ = [8, 12, 16, 20]
+ORIENT_SMOOTH_ALPHA = 0.5        # slerp weight per frame, run forwards then backwards
+
+
+def palm_frame(wrist, index_mcp, middle_mcp, pinky_mcp) -> np.ndarray:
+    """3x3, columns = palm axes: y = wrist -> middle MCP, x = pinky MCP ->
+    index MCP made orthogonal to y, z = x cross y."""
+    y = middle_mcp - wrist
+    y = y / np.linalg.norm(y)
+    x = index_mcp - pinky_mcp
+    x = x - y * (x @ y)
+    x = x / np.linalg.norm(x)
+    return np.stack([x, y, np.cross(x, y)], axis=1)
+
+
+def model_palm_frame(rep) -> tuple[np.ndarray, np.ndarray]:
+    """The Shadow Hand's palm frame built the same way from its own wrist
+    and knuckles, with the root at identity and all joints at 0. Returns
+    (M in root coordinates, the palm-side direction in root coordinates:
+    the way the middle fingertip moves when the finger flexes)."""
+    m, d = rep.model, rep.data
+    body = lambda n: mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, n)  # noqa: E731
+    ha = rep._hand_free_adr()
+    mujoco.mj_resetData(m, d)
+    d.qpos[ha:ha + 3] = 0
+    d.qpos[ha + 3:ha + 7] = [1, 0, 0, 0]
+    mujoco.mj_forward(m, d)
+    M = palm_frame(d.xpos[body("rh_wrist")], d.xpos[body("rh_ffknuckle")],
+                   d.xpos[body("rh_mfknuckle")], d.xpos[body("rh_lfknuckle")])
+    tip0 = d.xpos[body("rh_mfdistal")].copy()
+    j = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "rh_MFJ3")
+    d.qpos[m.jnt_qposadr[j]] = 1.2
+    mujoco.mj_forward(m, d)
+    palm_side = d.xpos[body("rh_mfdistal")] - tip0
+    mujoco.mj_resetData(m, d)
+    return M, palm_side / np.linalg.norm(palm_side)
+
+
+def handedness_check(rep, world_trials: list[np.ndarray]) -> dict:
+    """Is MediaPipe's palm frame the same handedness as the Shadow Hand's?
+    In both, z = x cross y; check that it points to the palm side (where the
+    fingers curl) in both. For MediaPipe, the palm side is where the
+    fingertips sit relative to the palm plane, averaged over all frames."""
+    M, palm_side = model_palm_frame(rep)
+    model_sign = float(np.sign(M[:, 2] @ palm_side))
+    dots = []
+    for w in world_trials:
+        for t in range(len(w)):
+            P = palm_frame(w[t, WRIST], w[t, INDEX_MCP_], w[t, MIDDLE_MCP], w[t, PINKY_MCP_])
+            centre = w[t, [WRIST, INDEX_MCP_, MIDDLE_MCP, PINKY_MCP_]].mean(axis=0)
+            dots.append(float((w[t, TIPS_].mean(axis=0) - centre) @ P[:, 2]))
+    dots = np.array(dots)
+    mp_sign = float(np.sign(np.median(dots)))
+    # thumb side: the thumb tip should sit on the index side (+x) in both
+    thumb_x = [float((w[t, 4] - w[t, WRIST]) @ palm_frame(w[t, WRIST], w[t, INDEX_MCP_],
+               w[t, MIDDLE_MCP], w[t, PINKY_MCP_])[:, 0]) for w in world_trials for t in range(len(w))]
+    return {"model_z_toward_palm": model_sign, "mediapipe_z_toward_palm": mp_sign,
+            "mediapipe_frames_palm_side_agree": float(np.mean(np.sign(dots) == mp_sign)),
+            "thumb_on_index_side_frac": float(np.mean(np.array(thumb_x) > 0)),
+            "mirrored": model_sign != mp_sign}
+
+
+def slerp_smooth(quats: np.ndarray, alpha: float = ORIENT_SMOOTH_ALPHA) -> np.ndarray:
+    """Light zero-lag smoothing on the rotation itself: exponential slerp
+    forwards, then backwards over the result."""
+    def one_pass(q):
+        out = q.copy()
+        for t in range(1, len(q)):
+            a, b = out[t - 1], q[t].copy()
+            if a @ b < 0:
+                b = -b                                    # same hemisphere
+            res = np.zeros(4)
+            # slerp(a, b, alpha) = a * (a^-1 b)^alpha
+            inv = np.zeros(4)
+            mujoco.mju_negQuat(inv, a)
+            dq = np.zeros(4)
+            mujoco.mju_mulQuat(dq, inv, b)
+            vel = np.zeros(3)
+            mujoco.mju_quat2Vel(vel, dq, 1.0)
+            step = np.zeros(4)
+            mujoco.mju_axisAngle2Quat(step, vel / (np.linalg.norm(vel) + 1e-12),
+                                      np.linalg.norm(vel) * alpha)
+            mujoco.mju_mulQuat(res, a, step)
+            out[t] = res / np.linalg.norm(res)
+        return out
+    return one_pass(one_pass(quats)[::-1])[::-1]
+
+
+def mat_to_quat(R: np.ndarray) -> np.ndarray:
+    q = np.zeros(4)
+    mujoco.mju_mat2Quat(q, np.asarray(R, dtype=float).flatten())
+    return q
+
+
+def landmarks_in_camera(image_lm: np.ndarray) -> np.ndarray:
+    """(T,21,3) hand landmarks in the phone camera frame, metres, from the
+    IMAGE landmarks: pixel position back-projected at the wrist depth, plus
+    MediaPipe's per-landmark relative depth z (relative to the wrist, same
+    scale as normalised x). The world landmarks were tried first and are
+    not usable here: their palm normal agrees with the image on which way
+    the palm faces in only 56% of frames, and a per-frame PnP fit of their
+    3D shape to the image does no better (48%, 40 px reprojection error)."""
+    z_wrist = wrist_in_camera(image_lm)[:, 2]
+    u = image_lm[:, :, 0] * IMAGE_W
+    v = image_lm[:, :, 1] * IMAGE_H
+    Z = z_wrist[:, None] + image_lm[:, :, 2] * IMAGE_W * z_wrist[:, None] / FOCAL_PX
+    return np.stack([(u - IMAGE_W / 2) * Z / FOCAL_PX, (v - IMAGE_H / 2) * Z / FOCAL_PX, Z], axis=2)
+
+
+def palm_orientation_sim(rep, image_lm: np.ndarray, mirrored: bool = False) -> tuple[np.ndarray, np.ndarray]:
+    """Per frame: (root quaternion in sim axes, raw palm frame in sim axes).
+    R_root = CAM_TO_SIM . P_cam(t) . M^T, then slerp-smoothed."""
+    M, _ = model_palm_frame(rep)
+    flip = np.diag([-1.0, 1.0, 1.0]) if mirrored else np.eye(3)
+    pts = landmarks_in_camera(image_lm)
+    quats, frames = [], []
+    for t in range(len(pts)):
+        w = pts[t] @ flip.T                               # global mirror, if needed
+        P = CAM_TO_SIM @ palm_frame(w[WRIST], w[INDEX_MCP_], w[MIDDLE_MCP], w[PINKY_MCP_])
+        frames.append(P)
+        quats.append(mat_to_quat(P @ M.T))
+    return slerp_smooth(np.array(quats)), np.array(frames)
+
+
+def to_sim_palm(rep, rec: dict, trial_meta: dict, mirrored: bool = False) -> dict:
+    """Like to_sim, but the hand orientation comes from the palm frame in the
+    world landmarks (no knuckle-up heuristic), and translation uses the same
+    image-space wrist trajectory rotated by the fixed CAM_TO_SIM."""
+    quats, _ = palm_orientation_sim(rep, np.array(trial_meta["image"]), mirrored)
+    out = dict(rec)
+    out["wrist_quat"] = quats.tolist()
+    g = trial_meta["grasp_frame"]
+    wrist_sim = wrist_in_camera(np.array(trial_meta["image"])) @ CAM_TO_SIM.T
+    shift = GRASP_WRIST_ANCHOR - wrist_sim[g]
+    wrist_sim = wrist_sim + shift
+    wrist_body = mujoco.mj_name2id(rep.model, mujoco.mjtObj.mjOBJ_BODY, "rh_wrist")
+    offset = rep.model.body_pos[wrist_body]
+    root = np.empty_like(wrist_sim)
+    for t, q in enumerate(quats):
+        Rq = np.zeros(9)
+        mujoco.mju_quat2Mat(Rq, q)
+        root[t] = wrist_sim[t] - Rq.reshape(3, 3) @ offset
+    out["wrist_pos"] = root.tolist()
+    out["phone_cam_pos_sim"] = shift.tolist()             # the phone sits at sim origin + shift
+    return out
