@@ -38,34 +38,106 @@ unsmoothed data as the one used everywhere in this repo. Full numbers in
 The replay grasp counts are much weaker evidence than the 42mm number, see
 [Which number comes from where](#which-number-comes-from-where).
 
-## Bug found and fixed
+## Key numbers
 
-While reworking the GIFs I found that the replay was writing joint angles
-into the wrong slots. The retargeter solves in `right_hand.xml`, which has
-no free joint, so its saved joint addresses start at `qpos[2]`. The replay
-scene uses a free-floating copy of the hand, where the free joint takes
-`qpos[0:7]` and every finger joint sits 7 slots later. `replay.py` used the
-saved addresses directly, so finger angles were written into the wrist
-position/orientation and every finger joint got the angle meant for
-the joint 7 places further along. That's why the sim hand used to jump around and leave the shot.
+### Retargeting accuracy (63 trials, all episodes)
 
-`replay.py` now looks joints up by name (`Replayer.scene_qpos_adr`). The
-earlier grasp numbers (computed with the scrambled joints) are gone from
-this README and every replay CSV was regenerated. The retargeting error
-(42mm) was not affected: it is solved and measured in `right_hand.xml`,
-where the addresses were always right.
+| Metric | Value |
+|---|---|
+| Mean fingertip error | 42.0 mm |
+| Median fingertip error | 41.9 mm |
+| Thumb error | 17.7 mm |
+| Other 4 fingers, mean | 48.1 mm |
+| Error vs. trial length, correlation (r) | 0.64 |
 
-## Results
+![Bar chart of fingertip error per finger with mean and standard deviation across 63 trials: thumb 17.7 mm, index 44.4, middle 47.4, ring 50.5, little 50.2](docs/figures/finger_error.png)
+
+The thumb's error is 17.7 ± 9.2 mm, while the other four fingers average
+44.4-50.5 mm, with standard deviations of 24.0-28.9 mm across the 63 trials.
+
+The thumb tracks far better than the other fingers (17.7mm vs. 44-51mm) even
+though it has the least room for error during a wrap grip — see
+[Occlusion analysis](#occlusion-analysis).
+
+### Occlusion analysis
+
+![Scatter of trial length in frames against mean fingertip error for 63 trials, with a least-squares fit line, r = 0.64](docs/figures/error_vs_length.png)
+
+Across the 63 trials (54-236 frames long), mean fingertip error rises by
+0.40 mm per frame of trial length on the fit line, with r = 0.64.
+
+Fingertip error correlates with trial length (r = 0.64) and the thumb tracks
+far better than the other four fingers (17.7mm vs. 44–51mm, per-finger means:
+index 44.4, middle 47.4, ring 50.5, little 50.2). Both point at
+the same cause: during transport, the cup itself occludes the camera's view
+of the fingers wrapped around it, and MediaPipe's detection confidence (and
+accuracy) drops. The thumb is usually on the near/visible side of the grip in
+this camera angle, which is why it survives occlusion better than the index
+through little fingers, which end up on the far side, against or wrapped
+around the cup. Longer trials simply spend more frames in that occluded
+transport phase, so their error accumulates. This is a camera-angle and
+occlusion limitation of a single static phone camera, not a bug in the
+retargeting solve itself — the first-frame (fully visible, open-hand)
+retargeting error is consistently sub-10mm; it's the mid-trial frames that
+the correlation is driven by.
+
+#### What didn't work: aperture-based trial segmentation
+
+`scripts/segment_trials.py` tries to find trial boundaries (and
+reach/grasp/transport/release/retreat phases) automatically from the
+thumb-to-fingertip distance ("aperture"). It does not work for this task: a
+wrap-around cup grasp keeps the thumb roughly a cup-diameter from the other
+fingertips throughout, so the aperture signal barely changes between "open
+hand near the cup" and "hand holding the cup" — and the thumb is usually
+occluded by the cup during the grasp anyway, which is the same occlusion
+problem as above. `outputs/aperture.png` shows the flat, indistinct signal
+that led to abandoning this approach in favor of manual annotation
+(`scripts/annotate.py`), which the organizers specifically said they value
+for quality.
+
+## Qualitative replay examples (kinematic attach, not physics)
 
 Each clip is phone footage with the MediaPipe landmarks drawn on it (left)
 synced frame-by-frame against the MuJoCo replay (right), rendered by
 `scripts/make_result_gifs.py`. It covers the annotated grasp-to-release
-span, with up to 15 frames before and after.
+span, with up to 15 frames before and after. The overlay shows the trial
+and frame, and while the cup is attached, "ATTACHED (kinematic)" with the
+live hand-cup penetration in mm.
 
 **Cup is attached to the fingertips by kinematic attach mode once ≥2
 fingertips touch it, and released at the annotated release frame. This is
 not physics-based carrying. Physics mode reaches ≥2 fingertip contacts in
 59/63 trials, but that counts contact, not a lift (see below).**
+
+The hand's overall orientation in the sim is inferred from the knuckle line,
+not measured, so the hand pose relative to the cup is only approximate. The
+grasp shape and contact counts are the meaningful part.
+
+#### `ep_047_t01` — clean case: penetration 0.0 mm mean, 0.2 mm max
+
+This is a **side pinch, not a full wrap**: the cup sits against the side of
+the fingers (flexion 0.29), with ≥2 fingertips within 5 mm in 89% of
+attached frames. Attached from frame 2 (the clip's first frame) to the
+annotated release at frame 85; the annotated grasp is frame 17.
+
+![ep_047_t01: phone footage with MediaPipe landmarks next to the MuJoCo replay; a side pinch carries the attached cup across the table, penetration 0.0 mm mean, 0.2 mm max](docs/gifs/ep_047_t01.gif)
+
+#### `ep_026_t01` — typical case: penetration 9.3 mm mean, 15.4 mm max
+
+This shows **typical residual overlap**: the fingers are curled (flexion
+0.48) and visibly sink into the cup, and ≥2 fingertips are within 5 mm in
+96% of attached frames. Its penetration is close to the all-trial average
+(10.2 mm mean). Attached from frame 3 to the annotated release at frame
+137; the annotated grasp is frame 17.
+
+![ep_026_t01: phone footage with MediaPipe landmarks next to the MuJoCo replay; curled fingers carry the attached cup with visible residual finger-cup overlap, penetration 9.3 mm mean, 15.4 mm max](docs/gifs/ep_026_t01.gif)
+
+There is no failure clip. Every trial reaches ≥2 fingertip contacts in
+kinematic mode, so there is no honest "contact never happens" kinematic
+case left to show. The four trials that never reach ≥2 contacts in physics
+mode are `ep_018_t03`, `ep_030_t01`, `ep_042_t01` and `ep_045_t01`.
+
+### How the attach works, and residual penetration
 
 **Kinematic attach does not resolve collisions.** The fingers come from my
 human hand retargeted onto a Shadow Hand with different proportions
@@ -96,7 +168,7 @@ The hand moves across the table, not just rotating in place: its wrist
 trajectory is recovered approximately from the phone image (see
 [Approximate wrist trajectory](#approximate-wrist-trajectory)).
 
-Other things the clips do *not* show:
+### What the clips do not show
 
 - **The sticky note is staged.** There is no camera-to-table calibration,
   so the table is placed under the cup's starting point and the sticky note
@@ -117,6 +189,8 @@ Other things the clips do *not* show:
   stands upright in the grip. `replay.py` uses the same rotation, so the
   clips and the replay numbers come from the same hand pose.
 
+### Checks and how the clips were chosen
+
 Automatic checks on every frame of every clip:
 
 - **Sim visibility:** the palm and 5 fingertips are projected into the image
@@ -133,12 +207,12 @@ Automatic checks on every frame of every clip:
   face detectors as an extra check, but they can't find my partly cropped
   face even in the band where it is, so they prove nothing and aren't used.
 - **Penetration:** below 5 mm max for the clean clip.
-- **Labels:** the overlay's phase comes from the sim's attach state, and the
-  script asserts that "ATTACHED" (with its penetration number) only appears
-  from the attach frame to the annotated release frame. `replay.py`'s rule
-  can attach *before* the annotated grasp, because the fingertips already
-  touch the cup where it is placed, so both annotated frames are printed
-  alongside.
+- **Labels:** "ATTACHED" and the penetration number come from the sim's
+  attach state, and the script asserts they only appear from the attach
+  frame to the annotated release frame. `replay.py`'s rule can attach
+  *before* the annotated grasp, because the fingertips already touch the cup
+  where it is placed, so each caption lists the attach, annotated grasp and
+  annotated release frames.
 
 **Choosing the clips.** I checked all 32 to_target trials (camera-dependent
 visibility at the earlier camera angle). Only `ep_047_t01` passes every
@@ -161,28 +235,6 @@ slightly above (−60°). Because the knuckle line is set vertical, the
 fingers bend in the horizontal plane, so their curl shows best from above.
 The earlier angle (−50°, 150°) looked along the edge of the palm, which
 made the hand look flat. Both clips were re-checked at this final angle.
-
-#### `ep_047_t01` — clean case: penetration 0.0 mm mean, 0.2 mm max
-
-This is a **side pinch, not a full wrap**: the cup sits against the side of
-the fingers (flexion 0.29), with ≥2 fingertips within 5 mm in 89% of
-attached frames.
-
-![ep_047_t01: phone footage with MediaPipe landmarks next to the MuJoCo replay; a side pinch carries the attached cup across the table, penetration 0.0 mm mean, 0.2 mm max](docs/gifs/ep_047_t01.gif)
-
-#### `ep_026_t01` — typical case: penetration 9.3 mm mean, 15.4 mm max
-
-This shows **typical residual overlap**: the fingers are curled (flexion
-0.48) and visibly sink into the cup, and ≥2 fingertips are within 5 mm in
-96% of attached frames. Its penetration is close to the all-trial average
-(10.2 mm mean).
-
-![ep_026_t01: phone footage with MediaPipe landmarks next to the MuJoCo replay; curled fingers carry the attached cup with visible residual finger-cup overlap, penetration 9.3 mm mean, 15.4 mm max](docs/gifs/ep_026_t01.gif)
-
-There is no failure clip. Every trial reaches ≥2 fingertip contacts in
-kinematic mode, so there is no honest "contact never happens" kinematic
-case left to show. The four trials that never reach ≥2 contacts in physics
-mode are `ep_018_t03`, `ep_030_t01`, `ep_042_t01` and `ep_045_t01`.
 
 ### Which number comes from where
 
@@ -248,24 +300,22 @@ hand size. What it does get right is the direction: the wrist moves
 image-right on 32/32 to_target trials and image-left on 30/30 to_start
 trials, matching the task.
 
-### Retargeting accuracy (63 trials, all episodes)
+## Bug found and fixed
 
-| Metric | Value |
-|---|---|
-| Mean fingertip error | 42.0 mm |
-| Median fingertip error | 41.9 mm |
-| Thumb error | 17.7 mm |
-| Other 4 fingers, mean | 48.1 mm |
-| Error vs. trial length, correlation (r) | 0.64 |
+While reworking the GIFs I found that the replay was writing joint angles
+into the wrong slots. The retargeter solves in `right_hand.xml`, which has
+no free joint, so its saved joint addresses start at `qpos[2]`. The replay
+scene uses a free-floating copy of the hand, where the free joint takes
+`qpos[0:7]` and every finger joint sits 7 slots later. `replay.py` used the
+saved addresses directly, so finger angles were written into the wrist
+position/orientation and every finger joint got the angle meant for
+the joint 7 places further along. That's why the sim hand used to jump around and leave the shot.
 
-![Bar chart of fingertip error per finger with mean and standard deviation across 63 trials: thumb 17.7 mm, index 44.4, middle 47.4, ring 50.5, little 50.2](docs/figures/finger_error.png)
-
-The thumb's error is 17.7 ± 9.2 mm, while the other four fingers average
-44.4-50.5 mm, with standard deviations of 24.0-28.9 mm across the 63 trials.
-
-The thumb tracks far better than the other fingers (17.7mm vs. 44-51mm) even
-though it has the least room for error during a wrap grip — see
-[Occlusion analysis](#occlusion-analysis).
+`replay.py` now looks joints up by name (`Replayer.scene_qpos_adr`). The
+earlier grasp numbers (computed with the scrambled joints) are gone from
+this README and every replay CSV was regenerated. The retargeting error
+(42mm) was not affected: it is solved and measured in `right_hand.xml`,
+where the addresses were always right.
 
 ## Pipeline
 
@@ -354,42 +404,6 @@ python scripts/make_result_gifs.py
 `PIPELINE.md` has the full step-by-step from raw phone footage onward
 (extraction, splitting, annotation, trial-building) with the exact commands
 and what to look for at each step.
-
-## Occlusion analysis
-
-![Scatter of trial length in frames against mean fingertip error for 63 trials, with a least-squares fit line, r = 0.64](docs/figures/error_vs_length.png)
-
-Across the 63 trials (54-236 frames long), mean fingertip error rises by
-0.40 mm per frame of trial length on the fit line, with r = 0.64.
-
-Fingertip error correlates with trial length (r = 0.64) and the thumb tracks
-far better than the other four fingers (17.7mm vs. 44–51mm, per-finger means:
-index 44.4, middle 47.4, ring 50.5, little 50.2). Both point at
-the same cause: during transport, the cup itself occludes the camera's view
-of the fingers wrapped around it, and MediaPipe's detection confidence (and
-accuracy) drops. The thumb is usually on the near/visible side of the grip in
-this camera angle, which is why it survives occlusion better than the index
-through little fingers, which end up on the far side, against or wrapped
-around the cup. Longer trials simply spend more frames in that occluded
-transport phase, so their error accumulates. This is a camera-angle and
-occlusion limitation of a single static phone camera, not a bug in the
-retargeting solve itself — the first-frame (fully visible, open-hand)
-retargeting error is consistently sub-10mm; it's the mid-trial frames that
-the correlation is driven by.
-
-### What didn't work: aperture-based trial segmentation
-
-`scripts/segment_trials.py` tries to find trial boundaries (and
-reach/grasp/transport/release/retreat phases) automatically from the
-thumb-to-fingertip distance ("aperture"). It does not work for this task: a
-wrap-around cup grasp keeps the thumb roughly a cup-diameter from the other
-fingertips throughout, so the aperture signal barely changes between "open
-hand near the cup" and "hand holding the cup" — and the thumb is usually
-occluded by the cup during the grasp anyway, which is the same occlusion
-problem as above. `outputs/aperture.png` shows the flat, indistinct signal
-that led to abandoning this approach in favor of manual annotation
-(`scripts/annotate.py`), which the organizers specifically said they value
-for quality.
 
 ## Limitations
 

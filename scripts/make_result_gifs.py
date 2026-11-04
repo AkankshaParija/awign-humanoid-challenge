@@ -119,12 +119,10 @@ MAX_PEN_MM_GIF = 5.0        # clips must have max hand-cup penetration below thi
 # index and middle nearly straight). ep_026_t01 is the typical case: the
 # only clearly curled trial (flexion 0.48, the to_target median) that
 # passes every check except penetration (mean 9.3, max 15.4 mm), so the
-# 5 mm limit is switched off for it and the overlap is in the caption.
+# 5 mm limit is switched off for it. Clean/typical labels are in the README captions.
 TRIALS = {
-    "ep_047_t01": {"failure": False, "pen_limit": True,
-                   "caption": "clean case: side pinch, not a full wrap"},
-    "ep_026_t01": {"failure": False, "pen_limit": False,
-                   "caption": "typical case: residual finger-cup overlap"},
+    "ep_047_t01": {"failure": False, "pen_limit": True},    # clean case, side pinch
+    "ep_026_t01": {"failure": False, "pen_limit": False},   # typical case, residual overlap
 }
 
 HAND_CONNECTIONS = [
@@ -301,22 +299,20 @@ def hand_pixel_frac(rep: Replayer, with_hand: np.ndarray, hand_geoms: list[int])
 
 # ------------------------------------------------------------- rendering
 
+OVERLAY_SCALE = 0.85        # large enough to read once the GIF is scaled down
+OVERLAY_MAX_LINES = 3
+
+
 def overlay(canvas: np.ndarray, lines: list[tuple[str, tuple]]) -> None:
-    y = 24
+    """At most 3 short lines, top-left, dark outline under light text."""
+    assert len(lines) <= OVERLAY_MAX_LINES, f"overlay has {len(lines)} lines"
+    y = 34
     for text, color in lines:
-        cv2.putText(canvas, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                    (0, 0, 0), 4, cv2.LINE_AA)
-        cv2.putText(canvas, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+        cv2.putText(canvas, text, (12, y), cv2.FONT_HERSHEY_SIMPLEX, OVERLAY_SCALE,
+                    (0, 0, 0), 5, cv2.LINE_AA)
+        cv2.putText(canvas, text, (12, y), cv2.FONT_HERSHEY_SIMPLEX, OVERLAY_SCALE,
                     color, 2, cv2.LINE_AA)
-        y += 24
-
-
-def label(canvas: np.ndarray, text: str, x: int) -> None:
-    y = canvas.shape[0] - 10
-    cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                (0, 0, 0), 3, cv2.LINE_AA)
-    cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                (255, 255, 255), 1, cv2.LINE_AA)
+        y += 34
 
 
 def render_trial(rep: Replayer, trial: str, hand_geoms: list[int],
@@ -455,26 +451,18 @@ def render_trial(rep: Replayer, trial: str, hand_geoms: list[int],
         # grasp frame: replay.py's rule can attach before the annotated grasp
         # (the fingertips already touch the seeded cup), and the overlay must
         # never say "approach" and ATTACHED at once.
+        # ATTACHED comes from the sim's attach state, not the annotated grasp
+        # frame (replay.py's rule can attach before it), and may only appear
+        # inside [attach frame, annotated release frame)
         attached = attach_f is not None and attach_f <= t < release_f
-        phase = ("approach" if not attached and t < release_f else
-                 "ATTACHED" if attached else "after release")
-        # the overlay may only claim ATTACHED inside [attach frame, release frame)
         assert (f["state"] == "ATTACHED") == attached, \
             f"{trial} frame {t}: state {f['state']} but attached range is [{attach_f}, {release_f})"
-        cap = TRIALS.get(trial, {}).get("caption")
-        lines = [(f"{trial}  frame {t}  [{phase}]", (235, 235, 235)),
-                 (f"annotated grasp f{grasp_f}, release f{release_f}; attach f{attach_f}",
-                  (200, 200, 200)),
-                 (f"fingertips within 5mm of cup: {f['tips']}", (235, 235, 235))]
+        # 3 short lines max; the full description lives in the README caption
+        lines = [(f"{trial}  frame {t}", (240, 240, 240))]
         if attached:
-            lines.append((f"ATTACHED (kinematic)  penetration {f['pen_mm']:.1f}mm", (0, 220, 0)))
-        elif f["state"] == "released":
-            lines.append(("released at annotated frame", (255, 200, 80)))
-        if cap:
-            lines.append((cap, (235, 235, 235)))
+            lines.append(("ATTACHED (kinematic)", (0, 220, 0)))
+            lines.append((f"penetration {f['pen_mm']:.1f} mm", (240, 240, 240)))
         overlay(canvas, lines)
-        label(canvas, "phone + MediaPipe", 10)
-        label(canvas, "MuJoCo, kinematic attach (not physics)", PHONE_SIDE + 10)
         out_frames.append(canvas)
 
     att = [f for f in frames if f["state"] == "ATTACHED"]
