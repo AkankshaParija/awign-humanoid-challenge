@@ -125,6 +125,24 @@ class Replayer:
                     return int(self.model.jnt_qposadr[j])
         return None
 
+    def scene_qpos_adr(self, rec: dict) -> np.ndarray:
+        """qpos addresses of the retargeted joints IN THIS SCENE, looked up
+        by joint name.
+
+        rec["qpos_adr"] holds the addresses from right_hand.xml, the model
+        retarget.py solves in. That model has no free joint, so its finger
+        joints start at qpos[2]; in this scene the hand's free joint takes
+        qpos[0:7] and the same joints sit 7 slots later. Using rec["qpos_adr"]
+        directly here (as an earlier version did) wrote finger angles into
+        the wrist position/orientation and shifted every finger joint."""
+        adr = []
+        for name in rec["joint_names"]:
+            j = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            if j < 0:
+                raise SystemExit(f"scene has no joint named {name}")
+            adr.append(int(self.model.jnt_qposadr[j]))
+        return np.array(adr)
+
     def tip_centroid_at_frame(self, rec: dict, frame: int) -> np.ndarray:
         """Where the robot's fingertips are at a given frame, in the scene's
         world frame. Used to start the cup near the hand instead of at the
@@ -132,7 +150,7 @@ class Replayer:
         from MediaPipe's camera-relative coordinates, which have no fixed
         relationship to wherever the scene file happened to place the cup."""
         qpos = np.array(rec["qpos"])
-        qadr = np.array(rec["qpos_adr"])
+        qadr = self.scene_qpos_adr(rec)
         wrist_pos = np.array(rec["wrist_pos"])
         wrist_quat = np.array(rec["wrist_quat"])
         hand_free_adr = self._hand_free_adr()
@@ -146,7 +164,7 @@ class Replayer:
     def run(self, rec: dict, out_path: Path | None,
             cup_start: np.ndarray | None = None) -> dict:
         qpos = np.array(rec["qpos"])
-        qadr = np.array(rec["qpos_adr"])
+        qadr = self.scene_qpos_adr(rec)
         wrist_pos = np.array(rec["wrist_pos"])
         wrist_quat = np.array(rec["wrist_quat"])
         fps = rec.get("fps", 30.0)
