@@ -1,6 +1,6 @@
 # Cup pick-and-place → Shadow Hand, from my own phone footage
 
-**Akanksha Parija** — Awign x Armature AI Labs Humanoid Challenge submission.
+**Akanksha Parija**, Awign x Armature AI Labs Humanoid Challenge submission.
 
 Phone video of me
 picking up a cup and placing it on a sticky note (and back) drives a
@@ -56,7 +56,7 @@ The thumb's error is 17.7 ± 9.2 mm, while the other four fingers average
 44.4-50.5 mm, with standard deviations of 24.0-28.9 mm across the 63 trials.
 
 The thumb tracks far better than the other fingers (17.7mm vs. 44-51mm) even
-though it has the least room for error during a wrap grip — see
+though it has the least room for error during a wrap grip. See
 [Occlusion analysis](#occlusion-analysis).
 
 ### Occlusion analysis
@@ -77,7 +77,7 @@ through little fingers, which end up on the far side, against or wrapped
 around the cup. Longer trials simply spend more frames in that occluded
 transport phase, so their error accumulates. This is a camera-angle and
 occlusion limitation of a single static phone camera, not a bug in the
-retargeting solve itself — the first-frame (fully visible, open-hand)
+retargeting solve itself: the first-frame (fully visible, open-hand)
 retargeting error is consistently sub-10mm; it's the mid-trial frames that
 the correlation is driven by.
 
@@ -88,7 +88,7 @@ reach/grasp/transport/release/retreat phases) automatically from the
 thumb-to-fingertip distance ("aperture"). It does not work for this task: a
 wrap-around cup grasp keeps the thumb roughly a cup-diameter from the other
 fingertips throughout, so the aperture signal barely changes between "open
-hand near the cup" and "hand holding the cup" — and the thumb is usually
+hand near the cup" and "hand holding the cup", and the thumb is usually
 occluded by the cup during the grasp anyway, which is the same occlusion
 problem as above. `outputs/aperture.png` shows the flat, indistinct signal
 that led to abandoning this approach in favor of manual annotation
@@ -118,7 +118,7 @@ approximate image-based trajectory, so the pose relative to the cup is
 still approximate. The grasp shape and contact counts are the meaningful
 part.
 
-#### `ep_015_t01` — clean case: penetration 0.1 mm mean, 0.4 mm max
+#### `ep_015_t01`: clean case, penetration 0.1 mm mean, 0.4 mm max
 
 This is a **flat-hand contact with nearly straight fingers**, not a wrap:
 mean finger flexion at the grasp is 0.04 of joint range, so the cup rests
@@ -129,7 +129,7 @@ frame 17.
 
 ![ep_015_t01: phone footage with MediaPipe landmarks next to the phone-view MuJoCo replay; flat, nearly straight fingers carry the attached cup, penetration 0.1 mm mean, 0.4 mm max](docs/gifs/ep_015_t01.gif)
 
-#### `ep_017_t01` — typical case: penetration 4.1 mm mean, 13.2 mm max
+#### `ep_017_t01`: typical case, penetration 4.1 mm mean, 13.2 mm max
 
 This shows the **typical curled grasp with residual overlap**: the fingers
 are curled (flexion 0.55) and sink into the cup in some frames, and ≥2
@@ -369,7 +369,7 @@ split into episodes (hand leaves frame) scripts/split_episodes.py
      ▼
 manual grasp/release annotation         scripts/annotate.py
      │  (63 trials: 32 to_target, 30 to_start, 1 unclear; OpenCV keyboard tool,
-     │   2 keystrokes per trial — g=grasp, r=release)
+     │   2 keystrokes per trial: g=grasp, r=release)
      ▼
 build per-trial datasets + phase labels  scripts/build_trials.py
      │  (reach / grasp / transport / release / retreat)
@@ -464,7 +464,7 @@ git clone https://github.com/google-deepmind/mujoco_menagerie.git
 ```
 
 `mujoco_menagerie/` and the raw video/keypoint intermediates are not
-committed (see `.gitignore`) — `data/trials/` (the per-trial datasets) and
+committed (see `.gitignore`). `data/trials/` (the per-trial datasets) and
 `outputs/qpos/` (retargeted joint angles, already computed) are small
 enough to keep and are committed, so replay works right after cloning
 without re-running the retargeter.
@@ -554,20 +554,20 @@ The main flags:
   human hand retargeted onto a different hand, and the residual hand-cup
   penetration is 9.7 mm mean and 23.3 mm max over all attached frames
   (only 5/63 trials are below 5 mm max).
-- **Occlusion, not solver error, is the main source of inaccuracy** — see
+- **Occlusion, not solver error, is the main source of inaccuracy**, see
   above. A second camera angle or markers on the fingers would likely fix
   this more than any change to the retargeting math.
 - **Temporal smoothing reduces jitter but not error.** See
   [Honest assessment](#honest-assessment) and
   [outputs/retarget_smoothed/NOTES.md](outputs/retarget_smoothed/NOTES.md)
-  for the full before/after numbers — the attempt is kept in the repo for
+  for the full before/after numbers. The attempt is kept in the repo for
   the record, but `outputs/qpos` (unsmoothed) is what everything else here
   uses.
 
 ## What I'd do next
 
 - A second, overhead or side, camera to resolve the occlusion during
-  transport — this is the single biggest lever on the 42mm error.
+  transport. This is the single biggest lever on the 42mm error.
 - Calibrate the phone camera (focal length, plus a checkerboard on the
   table) so the wrist trajectory has a measured error and real distances,
   and constrain the replayed hand to stay above the table.
@@ -576,7 +576,7 @@ The main flags:
   The table's tilt is already measured from the sticky note; its position
   isn't.
 - Policy training on top of the retargeted demonstrations (not attempted
-  here, per the challenge's own phasing — this submission is the data
+  here, per the challenge's own phasing. This submission is the data
   pipeline and simulated replay, not an RL policy).
 
 ## Acknowledgements
