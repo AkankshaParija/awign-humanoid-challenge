@@ -8,12 +8,15 @@ landmarks, re-run through the unmodified retarget.py:
 | mean fingertip error | 42.0 mm | 42.0 mm |
 | mean \|joint velocity\| | 0.02756 rad/frame | 0.02587 rad/frame (-6%) |
 | mean \|joint acceleration\| | 0.03273 rad/frame^2 | 0.02892 rad/frame^2 (-12%) |
-| kinematic grasp count | 55/63 | 51/63 |
-| physics grasp count | 31/63 | 26/63 |
+| kinematic grasp count | 63/63 | 61/63 |
+| physics grasp count | 61/63 | 60/63 |
+
+(Grasp counts regenerated after fixing the replay joint-mapping bug, see
+the README's "Bug found and fixed". The earlier counts, computed with the
+scrambled joints, were 55/63 -> 51/63 kinematic and 31/63 -> 26/63 physics.)
 
 Jitter goes down, fingertip accuracy is unchanged, and grasp detection
-slightly regresses (smoothing blunts the peak finger closure the contact
-check relies on). Net: not a clear win. Kept outputs/qpos (unsmoothed) as
+slightly regresses. Net: not a clear win. Kept outputs/qpos (unsmoothed) as
 the canonical data used everywhere else in this repo (README, GIFs).
 
 Smoothing weight sweep (retarget.py --smooth, on a 16-trial subset, same
