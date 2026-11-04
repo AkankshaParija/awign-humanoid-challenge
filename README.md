@@ -258,6 +258,11 @@ trials, matching the task.
 | Other 4 fingers, mean | 48.1 mm |
 | Error vs. trial length, correlation (r) | 0.64 |
 
+![Bar chart of fingertip error per finger with mean and standard deviation across 63 trials: thumb 17.7 mm, index 44.4, middle 47.4, ring 50.5, little 50.2](docs/figures/finger_error.png)
+
+The thumb's error is 17.7 ± 9.2 mm, while the other four fingers average
+44.4-50.5 mm, with standard deviations of 24.0-28.9 mm across the 63 trials.
+
 The thumb tracks far better than the other fingers (17.7mm vs. 44-51mm) even
 though it has the least room for error during a wrap grip — see
 [Occlusion analysis](#occlusion-analysis).
@@ -338,7 +343,10 @@ python scripts/replay.py outputs/qpos/ep_007_t01.json \
     --out outputs/videos/ep_007_t01.mp4
 python scripts/make_gifs.py outputs/videos/ep_007_t01.mp4 outputs/videos/ep_007_t01.gif
 
-# 5. regenerate the README gifs (prints every per-clip check: visibility,
+# 5. regenerate the README figures from outputs/retarget_summary.csv
+python scripts/plot_figures.py
+
+# 6. regenerate the README gifs (prints every per-clip check: visibility,
 #    trimming, face line, penetration; --trials ep_xxx_tyy ... to try others)
 python scripts/make_result_gifs.py
 ```
@@ -348,6 +356,11 @@ python scripts/make_result_gifs.py
 and what to look for at each step.
 
 ## Occlusion analysis
+
+![Scatter of trial length in frames against mean fingertip error for 63 trials, with a least-squares fit line, r = 0.64](docs/figures/error_vs_length.png)
+
+Across the 63 trials (54-236 frames long), mean fingertip error rises by
+0.40 mm per frame of trial length on the fit line, with r = 0.64.
 
 Fingertip error correlates with trial length (r = 0.64) and the thumb tracks
 far better than the other four fingers (17.7mm vs. 44–51mm, per-finger means:
