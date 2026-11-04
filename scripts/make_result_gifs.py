@@ -5,20 +5,15 @@ frame-synced, with a text overlay.
 What the MuJoCo side shows (kinematic attach, NOT physics-based carrying):
   1. The cup starts resting on the table, at the hand's own fingertip
      position at the annotated grasp frame (same seeding as replay.py).
-  2. Once >=2 fingertips touch it, the cup is ATTACHED: it keeps a fixed
-     offset from the fingertip centroid and moves with the hand. This is
-     the same attach rule as replay.py's kinematic mode. It stays attached
-     until the release frame even if contact flickers. The replayed hand is
-     not constrained by the table and often dips below it, so while
-     attached the cup is not allowed below the table top: it slides along
-     the surface instead of sinking through it. The number of frames where
-     this kicks in is printed per clip ("cup held at table").
+  2. Once >=2 fingertips touch it, the cup is ATTACHED: it is held fixed in
+     the palm frame, at the offset chosen by attach_fit.fit_offset to
+     minimise hand-cup penetration over the attached frames (same as
+     replay.py's kinematic mode). Kinematic attach does not resolve
+     collisions; the remaining penetration is measured and printed.
   3. At the annotated release frame it is detached, falls straight down
      (simple free fall, drawn kinematically) and rests upright on the table.
-     (replay.py instead releases when contact drops to 0; that is what
-     outputs/replay_summary.csv measures. Using the annotated frame here
-     makes the clips follow my real grasp->release timing. No reported
-     numbers are computed from these clips.)
+     No reported numbers are computed from these clips except the
+     per-clip penetration and visibility checks printed below.
 
 Scene staging: there is no camera-to-table calibration, so the table and
 sticky note are placed for a readable shot, not at measured positions. The
@@ -28,17 +23,27 @@ real sticky note location.
 
 Camera: one fixed set of camera settings for every clip (distance,
 azimuth, elevation). Only the look-at point moves: it follows the palm
-(lightly smoothed) and is pulled halfway towards the cup, so both the hand
-and the cup stay in frame.
+(lightly smoothed) and is pulled halfway towards the cup.
 
-Visibility check, printed per clip: for every frame, (a) palm and the 5
-fingertip positions are projected to pixels and must land inside the
-image, and (b) the frame is re-rendered with the hand hidden and enough
-pixels must differ (i.e. the hand is actually visible, not hidden under
-the table or off-screen). A clip below 95% passing frames is reported as FAIL.
+Automatic checks, printed per clip:
+  * sim visibility: palm + 5 fingertips projected inside the image, and
+    >=2% of pixels change when the hand is hidden (must pass >=95%);
+  * trimming: the clip is cut to the longest run of frames around the
+    attached span where the projected hand points stay inside the sim
+    image AND all 21 hand landmarks stay inside the phone crop, so the hand
+    never leaves either panel. A trial whose attached span itself fails is
+    rejected;
+  * no face: the phone camera is static, and my chin sits at y ~110-140 px
+    (of 720) in every frame, read off the footage by hand. The phone crop
+    never starts above FACE_LINE_Y = 200 px, and frames where any hand
+    landmark goes above that line are trimmed. (OpenCV's Haar face
+    detectors were tried as an extra check but can't find my partly
+    cropped face even in the top band of the frame where it is, so they
+    prove nothing and aren't used.);
+  * the carried cup never sinks more than 1 cm below the staged table top.
 
-Also saves 3 still frames per clip (approach, carrying, after release) to
-a scratch folder given by --stills (default outputs/gif_stills, gitignored).
+Saves stills (grasp frame, attach frame, mid-carry, release) to --stills
+(default outputs/gif_stills, gitignored).
 
     python scripts/make_result_gifs.py
 """
@@ -58,6 +63,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from replay import Replayer, fingertip_contacts  # noqa: E402
 import wrist_traj  # noqa: E402
+import attach_fit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -77,9 +83,12 @@ TABLE_HALF_XY = (0.60, 0.60)          # bigger table top so a carried cup stays 
 MJ_W, MJ_H = 560, 420                 # mujoco panel
 PHONE_SIDE = 420                      # phone panel: square crop, same height
 CAM_DISTANCE = 0.55                   # metres from the look-at point
-CAM_AZIMUTH = 150                     # degrees
-CAM_ELEVATION = -50                   # degrees, looking down at the table (best of a
-                                      # -20..-70 deg x 0.45..0.75 m sweep on 7 trials)
+CAM_AZIMUTH = 240                     # degrees
+CAM_ELEVATION = -60                   # degrees. Chosen from grasp-frame stills of
+                                      # side (-10), three-quarter (-30) and above (-60)
+                                      # views: with the knuckle line vertical, fingers
+                                      # bend in the horizontal plane, so the curl shows
+                                      # from above; az 150 looked along the palm's edge
 LOOKAT_SMOOTH = 0.3                   # EMA weight on the new palm position per frame
 
 # Hand root pose: scripts/wrist_traj.py (approximate wrist trajectory from
@@ -99,18 +108,23 @@ EDGE_MARGIN_PX = 4          # projected points must be at least this far inside
 DIFF_LEVEL = 25             # a pixel "differs" if any channel changes by more than this
 MIN_HAND_PIXEL_FRAC = 0.02  # >=2% of the panel must change when the hand is hidden
 PASS_RATE_REQUIRED = 0.95
+FACE_LINE_Y = 200           # px (of 720): nothing above this line is ever shown
+MAX_PEN_MM_GIF = 5.0        # clips must have max hand-cup penetration below this
 
-# Chosen by rendering all 32 to_target trials with the image-recovered wrist
-# trajectory (python scripts/make_result_gifs.py --trials ...): 18 pass the
-# 95% visibility check (2 did with the old rotate-in-place pose). Of those,
-# these move the cup furthest towards image-right (where the real sticky
-# note was) while rarely needing the table clamp (3%, 6%, 13% of frames).
-# No failure clip: every trial reaches >=2 fingertip contacts in kinematic
-# mode, so there is no honest "contact never happens" kinematic case.
+# Chosen by rendering all 32 to_target trials (python scripts/make_result_gifs.py
+# --trials ...) with every check below, plus the mean finger flexion at the
+# annotated grasp frame (non-thumb J1-J3, fraction of joint range).
+# ep_047_t01 is the only trial passing every check including max
+# penetration < 5 mm; it is a side pinch, not a full wrap (flexion 0.29:
+# index and middle nearly straight). ep_026_t01 is the typical case: the
+# only clearly curled trial (flexion 0.48, the to_target median) that
+# passes every check except penetration (mean 9.3, max 15.4 mm), so the
+# 5 mm limit is switched off for it and the overlap is in the caption.
 TRIALS = {
-    "ep_018_t02": {"failure": False},
-    "ep_027_t02": {"failure": False},
-    "ep_015_t01": {"failure": False},
+    "ep_047_t01": {"failure": False, "pen_limit": True,
+                   "caption": "clean case: side pinch, not a full wrap"},
+    "ep_026_t01": {"failure": False, "pen_limit": False,
+                   "caption": "typical case: residual finger-cup overlap"},
 }
 
 HAND_CONNECTIONS = [
@@ -181,6 +195,7 @@ def crop_box(image_lm: np.ndarray, frame_w: int, frame_h: int,
     mx, my = (x1 - x0) * margin, (y1 - y0) * margin
     x0, x1 = max(0, int(x0 - mx)), min(frame_w, int(x1 + mx))
     y0, y1 = max(0, int(y0 - my)), min(frame_h, int(y1 + 2 * my))  # more room below: the cup/table
+    y0 = max(y0, FACE_LINE_Y)       # never show anything above the face line
     return x0, y0, x1, y1
 
 
@@ -203,7 +218,17 @@ def draw_landmarks(frame: np.ndarray, lm: np.ndarray, frame_w: int, frame_h: int
         cv2.circle(frame, p, 4, (40, 220, 255), -1, cv2.LINE_AA)
 
 
-def phone_frames(trial_meta: dict, lo: int, hi: int) -> list[np.ndarray]:
+def phone_landmarks_ok(trial_meta: dict) -> np.ndarray:
+    """Per trial frame: every hand landmark is inside the video frame and
+    below the face line (so the crop can show the whole hand, no face)."""
+    lm = np.array(trial_meta["image"])
+    x = lm[:, :, 0] * wrist_traj.IMAGE_W
+    y = lm[:, :, 1] * wrist_traj.IMAGE_H
+    return ((x.min(1) >= 0) & (x.max(1) < wrist_traj.IMAGE_W)
+            & (y.min(1) >= FACE_LINE_Y + 10) & (y.max(1) < wrist_traj.IMAGE_H))
+
+
+def phone_frames(trial_meta: dict, lo: int, hi: int) -> tuple[list[np.ndarray], dict]:
     ep = json.loads((EPISODES_DIR / trial_meta["source_episode"]).read_text())
     trial_image = np.array(trial_meta["image"])
     offset = find_episode_offset(trial_image, np.array(ep["image"]))
@@ -211,16 +236,21 @@ def phone_frames(trial_meta: dict, lo: int, hi: int) -> list[np.ndarray]:
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     x0, y0, x1, y1 = crop_box(trial_image[lo:hi], frame_w, frame_h)
-    out = []
+    out, hand_in_crop = [], True
     for t in range(lo, hi):
         cap.set(cv2.CAP_PROP_POS_FRAMES, offset + t)
         ok, frame = cap.read()
         if not ok:
             frame = np.zeros((frame_h, frame_w, 3), np.uint8)
+        px = trial_image[t, :, :2] * [frame_w, frame_h]
+        hand_in_crop &= bool(np.all((px[:, 0] >= x0) & (px[:, 0] < x1)
+                                    & (px[:, 1] >= y0) & (px[:, 1] < y1)))
         draw_landmarks(frame, trial_image[t], frame_w, frame_h)
         out.append(fit_panel(frame[y0:y1, x0:x1], PHONE_SIDE))
     cap.release()
-    return out
+    checks = {"crop": (x0, y0, x1, y1),
+              "crop_below_face_line": y0 >= FACE_LINE_Y, "hand_in_crop": hand_in_crop}
+    return out, checks
 
 
 # ------------------------------------------------------ visibility check
@@ -305,8 +335,13 @@ def render_trial(rep: Replayer, trial: str, hand_geoms: list[int],
     wrist_quat = np.array(rec["wrist_quat"])
     hand_free_adr = rep._hand_free_adr()
     fps = rec.get("fps", 30.0)
-    tips = sorted(rep.tips)
     cq = rep.cup_qadr
+    geoms = attach_fit.HandCupGeoms(rep.model)
+
+    def set_hand(t: int) -> None:
+        rep.data.qpos[hand_free_adr:hand_free_adr + 3] = wrist_pos[t]
+        rep.data.qpos[hand_free_adr + 3:hand_free_adr + 7] = wrist_quat[t]
+        rep.data.qpos[qadr] = qpos[t]
 
     # cup seeded at the fingertip centroid at the annotated grasp frame
     # (same as replay.py); the table top is staged right under it
@@ -317,73 +352,67 @@ def render_trial(rep: Replayer, trial: str, hand_geoms: list[int],
                                       table_top_z - TABLE_HEIGHT / 2]
     rep.model.body_pos[sticky_body] = [0, 0, -10]  # hidden until we know the release spot
 
-    mujoco.mj_resetData(rep.model, rep.data)
-    rep.data.qpos[cq:cq + 3] = cup_start
-    rep.data.qpos[cq + 3:cq + 7] = [1, 0, 0, 0]
+    def reset_cup() -> None:
+        mujoco.mj_resetData(rep.model, rep.data)
+        rep.data.qpos[cq:cq + 3] = cup_start
+        rep.data.qpos[cq + 3:cq + 7] = [1, 0, 0, 0]
+
+    # find the attach frame (first frame >=2 fingertips touch the static
+    # cup, searched from frame 0 exactly like replay.py, so the fitted
+    # offset is identical) and fit the palm-frame offset over the attached frames
+    reset_cup()
+    attach_f, fit = None, None
+    for t in range(0, release_f):
+        set_hand(t)
+        mujoco.mj_forward(rep.model, rep.data)
+        if fingertip_contacts(rep.model, rep.data, rep.tips, rep.cup_body) >= 2:
+            attach_f = t
+            start_p, start_q = attach_fit.cup_offset_now(rep.data, geoms, cq)
+            fit = attach_fit.fit_offset(rep.model, rep.data, geoms, cq, set_hand,
+                                        list(range(t, release_f)), start_p, start_q)
+            break
 
     rep.cam.distance = CAM_DISTANCE
     rep.cam.azimuth = CAM_AZIMUTH
     rep.cam.elevation = CAM_ELEVATION
 
-    # pass 1: run the attach logic once to find where the cup is released,
-    # so the staged sticky note can already be on the table from frame 0
     def simulate():
+        """Yields (t, state) with the scene posed for frame t."""
         state = "on table"          # "on table" -> "ATTACHED" -> "released"
-        grip_offset = None
         drop_z, drop_t = None, None
         for t in range(lo, hi):
-            rep.data.qpos[hand_free_adr:hand_free_adr + 3] = wrist_pos[t]
-            rep.data.qpos[hand_free_adr + 3:hand_free_adr + 7] = wrist_quat[t]
-            rep.data.qpos[qadr] = qpos[t]
-            mujoco.mj_forward(rep.model, rep.data)
-            ncon = fingertip_contacts(rep.model, rep.data, rep.tips, rep.cup_body)
-            tip_mean = np.mean([rep.data.xpos[i] for i in tips], axis=0)
-            if state == "on table" and ncon >= 2 and t < release_f:
-                # attach: remember the cup's offset from the fingertips
+            set_hand(t)
+            mujoco.mj_kinematics(rep.model, rep.data)
+            if state == "on table" and attach_f is not None and t >= attach_f:
                 state = "ATTACHED"
-                grip_offset = rep.data.qpos[cq:cq + 3] - tip_mean
             elif state == "ATTACHED" and t >= release_f:
-                # detach at the annotated release frame; from here the cup
-                # falls straight down (simple free fall, drawn kinematically)
-                # and comes to rest upright on the table
+                # detach at the annotated release frame; the cup falls
+                # straight down (drawn kinematically) and rests upright
                 state = "released"
                 drop_z, drop_t = float(rep.data.qpos[cq + 2]), t
                 rep.data.qpos[cq + 3:cq + 7] = [1, 0, 0, 0]
-            if state == "released":
+            if state == "ATTACHED":
+                attach_fit.place_cup_in_palm(rep.model, rep.data, geoms, cq,
+                                             fit["offset_pos"], fit["offset_quat"])
+            elif state == "released":
                 dt = (t - drop_t) / fps
                 rep.data.qpos[cq + 2] = max(cup_rest_z, drop_z - 0.5 * 9.81 * dt * dt)
-            if state == "ATTACHED":
-                rep.data.qpos[cq:cq + 3] = tip_mean + grip_offset
-                # don't let the carried cup sink through the table top
-                held_at_table = rep.data.qpos[cq + 2] < cup_rest_z - 0.01
-                rep.data.qpos[cq + 2] = max(rep.data.qpos[cq + 2], cup_rest_z)
-            else:
-                held_at_table = False
             mujoco.mj_forward(rep.model, rep.data)
-            yield t, ncon, state, held_at_table
+            yield t, state
 
+    # pass 1: find where the cup is released, to stage the sticky note there
+    reset_cup()
     for _ in simulate():
         pass
     release_xy = rep.data.qpos[cq:cq + 2].copy()
-    # how far the hand's wrist moves from grasp to release (sim frame)
-    wb = mujoco.mj_name2id(rep.model, mujoco.mjtObj.mjOBJ_BODY, "rh_wrist")
-    wrist_at = {}
-    for f_ in (grasp_f, release_f):
-        rep.tip_centroid_at_frame(rec, f_)
-        wrist_at[f_] = rep.data.xpos[wb].copy()
-    hand_cm = float(np.linalg.norm(wrist_at[release_f] - wrist_at[grasp_f]) * 100)
-    carried_cm = float(np.linalg.norm(release_xy - cup_start[:2]) * 100)
     rep.model.body_pos[sticky_body] = [release_xy[0], release_xy[1],
                                        table_top_z + STICKY_NOTE_THICKNESS / 2]
 
-    # pass 2: same thing again, this time rendering and checking visibility
-    mujoco.mj_resetData(rep.model, rep.data)
-    rep.data.qpos[cq:cq + 3] = cup_start
-    rep.data.qpos[cq + 3:cq + 7] = [1, 0, 0, 0]
-    mj_frames, states, contacts, passes, below_table = [], [], [], [], []
-    inside_ok, pixels_ok = [], []
+    # pass 2: render every frame of the full window and run the sim checks
+    reset_cup()
+    frames = []
     lookat = None
-    for t, ncon, state, held_at_table in simulate():
+    for t, state in simulate():
         palm = rep.data.xpos[palm_body].copy()
         cup = rep.data.qpos[cq:cq + 3].copy()
         target = 0.5 * (palm + cup)      # follow the palm, keep the cup in frame too
@@ -392,47 +421,77 @@ def render_trial(rep: Replayer, trial: str, hand_geoms: list[int],
         rep.cam.lookat[:] = lookat
         rep.renderer.update_scene(rep.data, rep.cam)
         img = rep.renderer.render().copy()
+        frames.append({
+            "t": t, "state": state, "img": cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
+            "inside": points_inside(rep, [palm] + [rep.data.xpos[i] for i in sorted(rep.tips)]),
+            "pixels": hand_pixel_frac(rep, img, hand_geoms) >= MIN_HAND_PIXEL_FRAC,
+            "pen_mm": geoms.penetration(rep.data) * 1000,
+            "tips": geoms.tips_touching(rep.data),
+            "cup_in_table": state == "ATTACHED" and cup[2] < cup_rest_z - 0.01,
+        })
 
-        inside = points_inside(rep, [palm] + [rep.data.xpos[i] for i in tips])
-        frac = hand_pixel_frac(rep, img, hand_geoms)
-        inside_ok.append(inside)
-        pixels_ok.append(frac >= MIN_HAND_PIXEL_FRAC)
-        passes.append(inside and frac >= MIN_HAND_PIXEL_FRAC)
-        mj_frames.append(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-        states.append(state)
-        contacts.append(ncon)
-        below_table.append(held_at_table)  # hand went >1cm below where the cup could follow
+    # trim: longest run of frames where the hand stays inside BOTH panels,
+    # grown outwards from the attached span (which must pass entirely)
+    phone_ok = phone_landmarks_ok(meta_t)
+    ok = [f["inside"] and bool(phone_ok[f["t"]]) for f in frames]
+    core = [i for i, f in enumerate(frames) if f["state"] == "ATTACHED"] or \
+           [i for i, f in enumerate(frames) if grasp_f <= f["t"] < release_f]
+    a, b = core[0], core[-1]
+    core_ok = all(ok[a:b + 1])
+    while a > 0 and ok[a - 1]:
+        a -= 1
+    while b < len(frames) - 1 and ok[b + 1]:
+        b += 1
+    frames = frames[a:b + 1]
+    lo_t, hi_t = frames[0]["t"], frames[-1]["t"] + 1
 
     # --- compose side by side + overlay ---
-    phones = phone_frames(meta_t, lo, hi)
-    meta = TRIALS[trial]
+    phones, phone_checks = phone_frames(meta_t, lo_t, hi_t)
     out_frames = []
-    for i, (pf, mf) in enumerate(zip(phones, mj_frames)):
-        canvas = np.hstack([pf, mf])
-        t = lo + i
-        phase = ("approach" if t < grasp_f else
-                 "grasp..release" if t < release_f else "after release")
+    for pf, f in zip(phones, frames):
+        canvas = np.hstack([pf, f["img"]])
+        t = f["t"]
+        # The phase comes from the sim's attach state, not from the annotated
+        # grasp frame: replay.py's rule can attach before the annotated grasp
+        # (the fingertips already touch the seeded cup), and the overlay must
+        # never say "approach" and ATTACHED at once.
+        attached = attach_f is not None and attach_f <= t < release_f
+        phase = ("approach" if not attached and t < release_f else
+                 "ATTACHED" if attached else "after release")
+        # the overlay may only claim ATTACHED inside [attach frame, release frame)
+        assert (f["state"] == "ATTACHED") == attached, \
+            f"{trial} frame {t}: state {f['state']} but attached range is [{attach_f}, {release_f})"
+        cap = TRIALS.get(trial, {}).get("caption")
         lines = [(f"{trial}  frame {t}  [{phase}]", (235, 235, 235)),
-                 (f"fingertips touching cup: {contacts[i]}", (235, 235, 235))]
-        if states[i] == "ATTACHED":
-            lines.append(("ATTACHED (kinematic)", (0, 220, 0)))
-        elif states[i] == "released":
+                 (f"annotated grasp f{grasp_f}, release f{release_f}; attach f{attach_f}",
+                  (200, 200, 200)),
+                 (f"fingertips within 5mm of cup: {f['tips']}", (235, 235, 235))]
+        if attached:
+            lines.append((f"ATTACHED (kinematic)  penetration {f['pen_mm']:.1f}mm", (0, 220, 0)))
+        elif f["state"] == "released":
             lines.append(("released at annotated frame", (255, 200, 80)))
-        if meta["failure"]:
-            lines.append((f"FAILED: {meta['why']}", (80, 80, 255)))
+        if cap:
+            lines.append((cap, (235, 235, 235)))
         overlay(canvas, lines)
         label(canvas, "phone + MediaPipe", 10)
         label(canvas, "MuJoCo, kinematic attach (not physics)", PHONE_SIDE + 10)
         out_frames.append(canvas)
 
-    return {"frames": out_frames, "states": states, "lo": lo, "hi": hi,
-            "pass_rate": float(np.mean(passes)), "hand_cm": hand_cm,
+    att = [f for f in frames if f["state"] == "ATTACHED"]
+    pens = np.array([f["pen_mm"] for f in att]) if att else np.zeros(1)
+    return {"frames": out_frames, "ts": [f["t"] for f in frames],
+            "states": [f["state"] for f in frames], "lo": lo_t, "hi": hi_t,
+            "grasp_f": grasp_f, "attach_f": attach_f, "release_f": release_f,
+            "core_ok": core_ok,
+            "pass_rate": float(np.mean([f["inside"] and f["pixels"] for f in frames])),
+            "inside_all": all(f["inside"] for f in frames),
+            "pen_mean_mm": float(pens.mean()), "pen_max_mm": float(pens.max()),
+            "tips2_frac": float(np.mean([f["tips"] >= 2 for f in att])) if att else 0.0,
+            "fit_shift_mm": fit["shift_mm"] if fit else 0.0,
+            "cup_in_table_frames": int(sum(f["cup_in_table"] for f in frames)),
+            "carried_cm": float(np.linalg.norm(release_xy - cup_start[:2]) * 100),
             "cup_dxy_cm": ((release_xy - cup_start[:2]) * 100).tolist(),
-            "inside_rate": float(np.mean(inside_ok)),
-            "pixels_rate": float(np.mean(pixels_ok)), "carried_cm": carried_cm,
-            "attached_frames": states.count("ATTACHED"),
-            "below_table_frames": int(sum(below_table)),
-            "fps": fps}
+            **phone_checks, "fps": fps}
 
 
 def save_gif(frames_bgr: list[np.ndarray], dst: Path, fps: float) -> None:
@@ -458,15 +517,17 @@ def save_gif(frames_bgr: list[np.ndarray], dst: Path, fps: float) -> None:
 
 
 def save_stills(res: dict, trial: str, out_dir: Path) -> None:
-    """3 stills: mid-approach, middle of the carry, last frame (after release)."""
+    """Stills at the annotated grasp frame, the attach frame, mid-carry and
+    the release frame (whichever are inside the trimmed clip)."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    states = res["states"]
-    att = [i for i, s in enumerate(states) if s == "ATTACHED"]
-    picks = {"1_start": 0,
-             "2_carry": att[len(att) // 2] if att else len(states) // 2,
-             "3_end": len(states) - 1}
-    for name, i in picks.items():
-        cv2.imwrite(str(out_dir / f"{trial}_{name}.png"), res["frames"][i])
+    ts = res["ts"]
+    att = [i for i, s in enumerate(res["states"]) if s == "ATTACHED"]
+    picks = {"1_grasp": res["grasp_f"], "2_attach": res["attach_f"],
+             "3_carry": ts[att[len(att) // 2]] if att else None,
+             "4_release": res["release_f"]}
+    for name, t in picks.items():
+        if t is not None and t in ts:
+            cv2.imwrite(str(out_dir / f"{trial}_{name}.png"), res["frames"][ts.index(t)])
 
 
 def main() -> None:
@@ -486,21 +547,27 @@ def main() -> None:
 
     trials = args.trials or list(TRIALS)
     for trial in trials:
-        TRIALS.setdefault(trial, {"failure": False})
+        TRIALS.setdefault(trial, {"failure": False, "pen_limit": True})
         res = render_trial(rep, trial, hand_geoms, body("table"),
                            body("sticky_note"), body("rh_palm"))
         gif = args.gif_dir / f"{trial}.gif"
         save_gif(res["frames"], gif, res["fps"])
         save_stills(res, trial, args.stills)
-        verdict = "ok" if res["pass_rate"] >= PASS_RATE_REQUIRED else "FAIL (<95%)"
-        print(f"{trial}: frames {res['lo']}-{res['hi'] - 1} "
-              f"({len(res['frames'])}), attached {res['attached_frames']} frames, "
-              f"carried {res['carried_cm']:.1f}cm, "
-              f"cup held at table {res['below_table_frames']} frames, "
-              f"visible {res['pass_rate'] * 100:.1f}% {verdict} "
-              f"(points in image {res['inside_rate'] * 100:.0f}%, "
-              f"enough hand pixels {res['pixels_rate'] * 100:.0f}%), "
-              f"{gif.name} {gif.stat().st_size / 1e6:.2f} MB")
+        good = (res["core_ok"] and res["pass_rate"] >= PASS_RATE_REQUIRED
+                and res["inside_all"]
+                and (res["pen_max_mm"] < MAX_PEN_MM_GIF or not TRIALS[trial].get("pen_limit", True))
+                and res["crop_below_face_line"]
+                and res["hand_in_crop"] and res["cup_in_table_frames"] == 0)
+        print(f"{trial}: {'OK' if good else 'FAIL'}  frames {res['lo']}-{res['hi'] - 1} "
+              f"({len(res['frames'])}, attach {res['attach_f']}, release {res['release_f']}), "
+              f"visible {res['pass_rate'] * 100:.1f}%, hand in sim image all frames "
+              f"{res['inside_all']}, attached span kept whole {res['core_ok']}, "
+              f"penetration mean {res['pen_mean_mm']:.1f} max {res['pen_max_mm']:.1f}mm, "
+              f">=2 tips within 5mm {res['tips2_frac'] * 100:.0f}% of attached frames, "
+              f"cup in table {res['cup_in_table_frames']} frames, "
+              f"crop top y={res['crop'][1]} "
+              f"(>= {FACE_LINE_Y}: {res['crop_below_face_line']}), hand in crop {res['hand_in_crop']}, "
+              f"carried {res['carried_cm']:.1f}cm, {gif.name} {gif.stat().st_size / 1e6:.2f} MB")
 
 
 if __name__ == "__main__":
