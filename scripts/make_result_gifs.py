@@ -21,9 +21,11 @@ table top is put under the cup's starting position; the sticky note is drawn
 where the cup is released. The clip does not show the cup landing on the
 real sticky note location.
 
-Camera: one fixed set of camera settings for every clip (distance,
-azimuth, elevation). Only the look-at point moves: it follows the palm
-(lightly smoothed) and is pulled halfway towards the cup.
+Camera: one fixed set of camera settings for every clip. By default
+(--orient palm) it looks the way the phone does (wrist_traj.phone_view_angles,
+from the measured camera->sim rotation) from a fixed distance; only the
+look-at point moves: it follows the palm (lightly smoothed) and is pulled
+halfway towards the cup.
 
 Automatic checks, printed per clip:
   * sim visibility: palm + 5 fingertips projected inside the image, and
@@ -82,24 +84,21 @@ TABLE_RGBA = [0.76, 0.63, 0.47, 1.0]  # tan
 TABLE_HALF_XY = (0.60, 0.60)          # bigger table top so a carried cup stays over it
 MJ_W, MJ_H = 560, 420                 # mujoco panel
 PHONE_SIDE = 420                      # phone panel: square crop, same height
+# camera for the old --orient knuckle mode only (kept for comparison)
 CAM_DISTANCE = 0.55                   # metres from the look-at point
 CAM_AZIMUTH = 240                     # degrees
-CAM_ELEVATION = -60                   # degrees. Chosen from grasp-frame stills of
-                                      # side (-10), three-quarter (-30) and above (-60)
-                                      # views: with the knuckle line vertical, fingers
-                                      # bend in the horizontal plane, so the curl shows
-                                      # from above; az 150 looked along the palm's edge
+CAM_ELEVATION = -60                   # degrees
 LOOKAT_SMOOTH = 0.3                   # EMA weight on the new palm position per frame
 
-# Hand root pose: scripts/wrist_traj.py (approximate wrist trajectory from
-# the image landmarks, rotated so the grasp's knuckle line is vertical).
-# Set by --wrist; "image" is the default, "rotate-only" is the old
-# rotate-in-place behaviour, for comparison.
+# Hand root position: scripts/wrist_traj.py (approximate wrist trajectory
+# from the image landmarks). Set by --wrist; "image" is the default,
+# "rotate-only" is the old rotate-in-place behaviour, for comparison.
 WRIST_MODE = "image"
-# Hand orientation: "knuckle" = per-trial knuckle-line-vertical rotation
-# (main); "palm" = palm frame from the image landmarks with one fixed
-# camera->sim rotation (orient-fix), viewed with PHONE_VIEW_* below.
-ORIENT_MODE = "knuckle"
+# Hand orientation: "palm" (default) = palm frame from the image landmarks
+# with one fixed camera->sim rotation incl. the measured phone tilt, viewed
+# with PHONE_VIEW_* below; "knuckle" = the old per-trial knuckle-line-vertical
+# heuristic, kept only for comparison.
+ORIENT_MODE = "palm"
 # phone-view camera for --orient palm: the phone's own viewing direction
 # (from the measured CAM_TO_SIM), following the palm at a fixed distance so
 # the hand is readable

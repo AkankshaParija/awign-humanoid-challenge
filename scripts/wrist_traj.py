@@ -28,9 +28,13 @@ f is NOT calibrated: it is an assumed typical phone main camera, 26 mm
 video resolution used for detection (~69 deg horizontal field of view).
 The accuracy of this trajectory has not been measured.
 
-The trajectory is then lightly smoothed and, for the sim, rotated once per
-trial so that the little->index knuckle line at the annotated grasp frame
-points up (same rotation the GIFs used before). The hand's free joint sits at
+The trajectory is then lightly smoothed and rotated into the sim. The
+default (to_sim_palm, used by replay.py and the GIFs) takes the hand's
+orientation from the palm frame in the image landmarks and uses one fixed
+camera->sim rotation that includes the phone tilt measured from the sticky
+note (see the orient-fix section at the bottom of this file). to_sim is the
+old per-trial "knuckle line vertical" heuristic, kept only for comparison
+(--orient knuckle). The hand's free joint sits at
 the forearm origin, ~21 cm behind the wrist, so the root position is set so
 that the model's wrist body (rh_wrist) lands on the estimated wrist.
 

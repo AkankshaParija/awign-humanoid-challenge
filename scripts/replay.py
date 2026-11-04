@@ -297,11 +297,11 @@ def main() -> None:
                          "recovered from the image landmarks (scripts/wrist_traj.py); "
                          "'rotate-only' = hand-centred, rotates in place, same "
                          "knuckle-up frame; 'raw' = the old camera-axes pose")
-    ap.add_argument("--orient", choices=["knuckle", "palm"], default="knuckle",
-                    help="hand orientation with --wrist image: 'knuckle' = per-trial "
-                         "knuckle-line-vertical rotation (canonical outputs); 'palm' = "
+    ap.add_argument("--orient", choices=["knuckle", "palm"], default="palm",
+                    help="hand orientation with --wrist image: 'palm' (default) = "
                          "palm frame from the image landmarks, one fixed camera->sim "
-                         "rotation (orient-fix, wrist_traj.to_sim_palm)")
+                         "rotation incl. the measured phone tilt (wrist_traj.to_sim_palm); "
+                         "'knuckle' = the old per-trial knuckle-line-vertical heuristic")
     args = ap.parse_args()
 
     src = Path(args.qpos)
