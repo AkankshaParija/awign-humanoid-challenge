@@ -134,6 +134,17 @@ TRIALS = {
     "ep_026_t01": {"failure": False, "pen_limit": False},   # typical case, residual overlap
 }
 
+# --orient palm clips (orient-fix), chosen the same way from all 32 to_target
+# trials surveyed with the data-driven orientation: ep_015_t01 is the only
+# trial passing every check including < 5 mm (0.1 / 0.4 mm), with nearly
+# straight fingers (flexion 0.04 at the grasp frame); ep_017_t01 is the
+# clearly curled trial (flexion 0.55) with the lowest penetration among
+# those passing every other check (4.2 / 13.2 mm).
+PALM_TRIALS = {
+    "ep_015_t01": {"failure": False, "pen_limit": True},    # clean case, flat-hand contact
+    "ep_017_t01": {"failure": False, "pen_limit": False},   # typical case, curled, residual overlap
+}
+
 HAND_CONNECTIONS = [
     (0, 1), (1, 2), (2, 3), (3, 4),
     (0, 5), (5, 6), (6, 7), (7, 8),
@@ -549,7 +560,9 @@ def main() -> None:
     hand_geoms = style_scene(rep.model)
     body = lambda n: mujoco.mj_name2id(rep.model, mujoco.mjtObj.mjOBJ_BODY, n)  # noqa: E731
 
-    trials = args.trials or list(TRIALS)
+    if ORIENT_MODE == "palm":
+        TRIALS.update(PALM_TRIALS)
+    trials = args.trials or list(PALM_TRIALS if ORIENT_MODE == "palm" else TRIALS)
     for trial in trials:
         TRIALS.setdefault(trial, {"failure": False, "pen_limit": True})
         res = render_trial(rep, trial, hand_geoms, body("table"),
