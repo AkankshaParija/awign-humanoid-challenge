@@ -97,50 +97,6 @@ for quality.
 
 ## Replay examples
 
-### Finger retargeting replay
-
-Phone footage with the MediaPipe landmarks (left) next to the Shadow Hand
-(right) with its **wrist held in one fixed pose** (fingers up, palm towards
-the camera, hand centred). Only the retargeted finger joint angles for that
-trial move it: no cup, no wrist translation or rotation, the same camera
-for both clips. This isolates the finger retargeting from the approximate
-wrist trajectory and the cup. Rendered by `scripts/make_finger_gifs.py`
-with the same face-line and visibility checks as the cup clips. Only frames
-where MediaPipe actually detected my hand are shown, with no interpolated
-tracking.
-
-#### `ep_028_t01` — clearest open → close → open cycle
-
-![ep_028_t01: phone footage with MediaPipe landmarks next to a fixed-wrist Shadow Hand whose fingers close and reopen as the retargeted joints move](docs/gifs/ep_028_t01_fingers.gif)
-
-Frames 0-72 of 86 (all detected). Mean finger flexion over the clip goes
-from 0.16 to 0.68 of joint range, and the trial's retargeting error is
-37.6 mm.
-
-#### `ep_029_t01` — largest continuous open → close
-
-![ep_029_t01: phone footage with MediaPipe landmarks next to a fixed-wrist Shadow Hand whose fingers close from open to a near fist as the retargeted joints move](docs/gifs/ep_029_t01_fingers.gif)
-
-Frames 0-70 of 84 (all detected). Mean finger flexion goes from 0.13 to
-0.80 of joint range, and the trial's retargeting error is 51.6 mm.
-
-**How these two were chosen.** For every trial I took the mean flexion of
-the non-thumb finger joints (J1–J3, each as a fraction of its range) and
-its 5th-95th percentile range over the trial (median 0.27 across the 63
-trials). I also took tracking confidence: the share of frames MediaPipe
-actually detected. The trials with the largest raw range are not shown:
-`ep_024_t03` (0.67) and `ep_011_t02` (0.58). Their flexion joints sit
-exactly at a joint limit in 90% and 73% of frames and jump between limits
-in steps rather than moving. `ep_028_t01` (range 0.52, at a limit 48% of
-the time) and `ep_029_t01` (range 0.67, 68%) move continuously.
-
-One thing that came out of this: across all 63 trials, the fraction of
-finger flexion joint-frames sitting at a joint limit (median 51%)
-correlates with retargeting error at r = 0.97. That is a correlation, not a
-diagnosis. Pinned joints could come from occluded, bad landmark targets or
-from a hand-size mismatch in the retargeting. I didn't investigate further
-here.
-
 ### Qualitative replay with kinematic attach (phone view)
 
 Each clip is phone footage with the MediaPipe landmarks drawn on it (left)
@@ -429,7 +385,6 @@ replay + fingertip-contact grasp check   scripts/replay.py
      │
      ▼
 GIFs (kinematic attach, visibility check) scripts/make_result_gifs.py
-     + finger-only GIFs (wrist fixed)     scripts/make_finger_gifs.py
 ```
 
 ## Setup
@@ -481,8 +436,7 @@ python scripts/plot_figures.py
 
 # 6. regenerate the README gifs (prints every per-clip check: visibility,
 #    trimming, face line, penetration; --trials ep_xxx_tyy ... to try others)
-python scripts/make_result_gifs.py      # cup clips (kinematic attach)
-python scripts/make_finger_gifs.py      # finger retargeting clips (wrist fixed)
+python scripts/make_result_gifs.py
 ```
 
 `PIPELINE.md` has the full step-by-step from raw phone footage onward
