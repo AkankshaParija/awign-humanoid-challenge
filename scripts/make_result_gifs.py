@@ -57,6 +57,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from replay import Replayer, fingertip_contacts  # noqa: E402
+import wrist_traj  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -81,13 +82,11 @@ CAM_ELEVATION = -50                   # degrees, looking down at the table (best
                                       # -20..-70 deg x 0.45..0.75 m sweep on 7 trials)
 LOOKAT_SMOOTH = 0.3                   # EMA weight on the new palm position per frame
 
-# The retargeted wrist pose is in the phone camera's axes, not a z-up
-# world, and there's no camera-to-table calibration to say where real "up"
-# is. In a side wrap grasp the cup's axis runs along the knuckle line, so
-# each clip is rotated once (one rigid rotation for the whole trial) so
-# that the little->index knuckle direction at the annotated grasp frame
-# points straight up. Contact with the cup can then differ slightly from
-# replay.py, whose cup axis is the camera's depth axis instead (see README).
+# Hand root pose: scripts/wrist_traj.py (approximate wrist trajectory from
+# the image landmarks, rotated so the grasp's knuckle line is vertical).
+# Set by --wrist; "image" is the default, "rotate-only" is the old
+# rotate-in-place behaviour, for comparison.
+WRIST_MODE = "image"
 
 LEAD = 15        # frames of approach shown before the annotated grasp
 AFTER = 15       # frames shown after the annotated release
@@ -101,16 +100,17 @@ DIFF_LEVEL = 25             # a pixel "differs" if any channel changes by more t
 MIN_HAND_PIXEL_FRAC = 0.02  # >=2% of the panel must change when the hand is hidden
 PASS_RATE_REQUIRED = 0.95
 
-# Chosen by rendering all 32 to_target trials (python scripts/make_result_gifs.py
-# --trials ...): these are the only two that pass the 95% visibility check.
-# In the others the replayed hand dips under the staged table plane for
-# >5% of frames (nothing constrains the hand to stay above a table), so it
-# is hidden. No failure clip: with the corrected joint mapping every trial
-# reaches >=2 fingertip contacts in kinematic mode, so there is no honest
-# "contact never happens" kinematic case to show.
+# Chosen by rendering all 32 to_target trials with the image-recovered wrist
+# trajectory (python scripts/make_result_gifs.py --trials ...): 18 pass the
+# 95% visibility check (2 did with the old rotate-in-place pose). Of those,
+# these move the cup furthest towards image-right (where the real sticky
+# note was) while rarely needing the table clamp (3%, 6%, 13% of frames).
+# No failure clip: every trial reaches >=2 fingertip contacts in kinematic
+# mode, so there is no honest "contact never happens" kinematic case.
 TRIALS = {
-    "ep_034_t01": {"failure": False},
-    "ep_024_t01": {"failure": False},
+    "ep_018_t02": {"failure": False},
+    "ep_027_t02": {"failure": False},
+    "ep_015_t01": {"failure": False},
 }
 
 HAND_CONNECTIONS = [
@@ -153,32 +153,6 @@ def style_scene(model) -> list[int]:
     table_mat = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MATERIAL, "table_mat")
     model.mat_rgba[table_mat] = TABLE_RGBA
     return hand_geoms
-
-
-def camera_to_sim(rep: Replayer, rec: dict, grasp_f: int) -> dict:
-    """Copy of a retargeted record with wrist_pos/wrist_quat rotated so the
-    knuckle line at the grasp frame is vertical (see comment above)."""
-    # pose the hand at the grasp frame in the unrotated (camera) frame
-    rep.tip_centroid_at_frame(rec, grasp_f)
-    body = lambda n: mujoco.mj_name2id(rep.model, mujoco.mjtObj.mjOBJ_BODY, n)  # noqa: E731
-    up = rep.data.xpos[body("rh_ffknuckle")] - rep.data.xpos[body("rh_lfknuckle")]
-    up /= np.linalg.norm(up)
-    ex = np.array([1.0, 0.0, 0.0])          # keep the phone image's "right" as sim x
-    ex -= up * (ex @ up)
-    ex /= np.linalg.norm(ex)
-    ey = np.cross(up, ex)
-    R = np.stack([ex, ey, up])              # rows = sim axes in camera coords
-    q_R = np.zeros(4)
-    mujoco.mju_mat2Quat(q_R, R.flatten())
-    out = dict(rec)
-    out["wrist_pos"] = (np.array(rec["wrist_pos"]) @ R.T).tolist()
-    quats = []
-    for q in rec["wrist_quat"]:
-        q_new = np.zeros(4)
-        mujoco.mju_mulQuat(q_new, q_R, np.array(q))   # rotate in the world frame
-        quats.append(q_new)
-    out["wrist_quat"] = np.array(quats).tolist()
-    return out
 
 
 # ------------------------------------------------------------ phone side
@@ -319,7 +293,8 @@ def render_trial(rep: Replayer, trial: str, hand_geoms: list[int],
                  table_body: int, sticky_body: int, palm_body: int) -> dict:
     meta_t = json.loads((TRIALS_DIR / f"{trial}.json").read_text())
     grasp_f, release_f = meta_t["grasp_frame"], meta_t["release_frame"]
-    rec = camera_to_sim(rep, json.loads((QPOS_DIR / f"{trial}.json").read_text()), grasp_f)
+    rec = wrist_traj.to_sim(rep, json.loads((QPOS_DIR / f"{trial}.json").read_text()),
+                            meta_t, translate=WRIST_MODE == "image")
     n_total = len(rec["qpos"])
     lo = max(0, grasp_f - LEAD)
     hi = min(n_total, release_f + AFTER + 1)
@@ -390,6 +365,13 @@ def render_trial(rep: Replayer, trial: str, hand_geoms: list[int],
     for _ in simulate():
         pass
     release_xy = rep.data.qpos[cq:cq + 2].copy()
+    # how far the hand's wrist moves from grasp to release (sim frame)
+    wb = mujoco.mj_name2id(rep.model, mujoco.mjtObj.mjOBJ_BODY, "rh_wrist")
+    wrist_at = {}
+    for f_ in (grasp_f, release_f):
+        rep.tip_centroid_at_frame(rec, f_)
+        wrist_at[f_] = rep.data.xpos[wb].copy()
+    hand_cm = float(np.linalg.norm(wrist_at[release_f] - wrist_at[grasp_f]) * 100)
     carried_cm = float(np.linalg.norm(release_xy - cup_start[:2]) * 100)
     rep.model.body_pos[sticky_body] = [release_xy[0], release_xy[1],
                                        table_top_z + STICKY_NOTE_THICKNESS / 2]
@@ -444,7 +426,8 @@ def render_trial(rep: Replayer, trial: str, hand_geoms: list[int],
         out_frames.append(canvas)
 
     return {"frames": out_frames, "states": states, "lo": lo, "hi": hi,
-            "pass_rate": float(np.mean(passes)),
+            "pass_rate": float(np.mean(passes)), "hand_cm": hand_cm,
+            "cup_dxy_cm": ((release_xy - cup_start[:2]) * 100).tolist(),
             "inside_rate": float(np.mean(inside_ok)),
             "pixels_rate": float(np.mean(pixels_ok)), "carried_cm": carried_cm,
             "attached_frames": states.count("ATTACHED"),
@@ -487,12 +470,15 @@ def save_stills(res: dict, trial: str, out_dir: Path) -> None:
 
 
 def main() -> None:
+    global WRIST_MODE
     ap = argparse.ArgumentParser()
     ap.add_argument("--stills", type=Path, default=ROOT / "outputs/gif_stills",
                     help="scratch folder for 3 still frames per clip (not committed)")
     ap.add_argument("--trials", nargs="*", help="override the trial list (for trying candidates)")
     ap.add_argument("--gif-dir", type=Path, default=GIF_DIR)
+    ap.add_argument("--wrist", choices=["image", "rotate-only"], default=WRIST_MODE)
     args = ap.parse_args()
+    WRIST_MODE = args.wrist
 
     rep = Replayer(str(SCENE), mode="kinematic", width=MJ_W, height=MJ_H)
     hand_geoms = style_scene(rep.model)

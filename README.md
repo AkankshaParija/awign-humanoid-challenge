@@ -30,7 +30,7 @@ landmarks, then re-run through the same retargeting code). Jitter went
 down: mean joint velocity dropped about 6% and acceleration about 12%. But
 fingertip error stayed exactly the same, 42.0mm before and after, because
 smoothing cleans up noise, not a camera-angle bias. The contact-based grasp
-count also went slightly down (63/63 to 61/63 kinematic, 61/63 to 60/63
+count also went slightly down (63/63 to 62/63 kinematic, 62/63 to 61/63
 physics). So I kept the original, unsmoothed data as the one used
 everywhere in this repo. Full numbers in
 [outputs/retarget_smoothed/NOTES.md](outputs/retarget_smoothed/NOTES.md).
@@ -65,7 +65,11 @@ span, plus 15 frames of approach before and 15 frames after.
 **Cup is attached to the fingertips by kinematic attach mode once ≥2
 fingertips touch it, and released at the annotated release frame. This is
 not physics-based carrying. Physics mode reaches ≥2 fingertip contacts in
-61/63 trials, but that counts contact, not a lift (see below).**
+62/63 trials, but that counts contact, not a lift (see below).**
+
+The hand now moves across the table, not just rotating in place: its wrist
+trajectory is recovered approximately from the phone image (see
+[Approximate wrist trajectory](#approximate-wrist-trajectory)).
 
 Other things the clips do *not* show:
 
@@ -73,39 +77,47 @@ Other things the clips do *not* show:
   so the table is placed under the cup's starting point and the sticky note
   is drawn where the cup is released. The cup does not land on the real
   sticky note's location.
-- **The travel is not my real transport.** The sim hand only moves
-  because the wrist rotates (see [Limitations](#limitations)). The cup
-  moves 8.2cm and 5.6cm in these clips, and that movement comes from the
-  wrist rotating, not from the hand translating across the table the way
-  mine did.
+- **The travel distance is not measured.** The cup moves 42.6cm, 44.0cm
+  and 51.0cm in these clips. Those distances scale directly with the
+  assumed focal length and hand size, and the trajectory's error has not
+  been measured, so they are not real distances. The direction is the
+  trustworthy part: across all 32 to_target trials the sim cup moves
+  image-right, the way my real cup went, in 32/32 (23/32 before, when the
+  hand only rotated in place).
 - **The table is not a constraint on the hand.** The replayed hand often
   dips below the staged table top. While attached, the cup is held at the
-  table top instead of sinking through it (77/154 frames in `ep_034_t01`,
-  62/128 in `ep_024_t01`), so in those frames it slides along the table.
-- **"Up" is inferred.** The data is in the phone camera's axes. Each clip
+  table top instead of sinking through it (4/155 frames in `ep_018_t02`,
+  11/171 in `ep_027_t02`, 17/127 in `ep_015_t01`), so in those frames it
+  slides along the table.
+- **"Up" is inferred.** The data is in the phone camera's axes. Each trial
   is rotated once so the little→index knuckle line at the grasp frame is
   vertical (in a side wrap grasp the cup's axis runs along it), so the cup
-  stands upright in the grip.
+  stands upright in the grip. `replay.py` uses the same rotation, so the
+  clips and the replay numbers come from the same hand pose.
 
 Every frame is checked automatically: the palm and 5 fingertips are
 projected into the image and must land inside it, and the frame is
 re-rendered with the hand hidden to confirm ≥2% of pixels change. I
-rendered all 32 to_target trials with one camera setting. Only these two
-pass on ≥95% of frames; in the rest the hand is hidden under the table
-plane for too many frames.
+rendered all 32 to_target trials with one camera setting: 18 pass on ≥95%
+of frames (2 did when the hand only rotated in place). These three move the
+cup furthest while rarely needing the table clamp.
 
-#### `ep_034_t01` — hand visible in 100% of frames, cup carried 8.2cm
+#### `ep_018_t02` — hand visible in 96.8% of frames
 
-![ep_034_t01: phone footage with MediaPipe landmarks next to the MuJoCo replay; the cup is attached once two fingertips touch it and released at the annotated frame](docs/gifs/ep_034_t01.gif)
+![ep_018_t02: phone footage with MediaPipe landmarks next to the MuJoCo replay; the hand carries the attached cup across the table and releases it at the annotated frame](docs/gifs/ep_018_t02.gif)
 
-#### `ep_024_t01` — hand visible in 97.7% of frames, cup carried 5.6cm
+#### `ep_027_t02` — hand visible in 97.1% of frames
 
-![ep_024_t01: phone footage with MediaPipe landmarks next to the MuJoCo replay; the cup is attached once two fingertips touch it and released at the annotated frame](docs/gifs/ep_024_t01.gif)
+![ep_027_t02: phone footage with MediaPipe landmarks next to the MuJoCo replay; the hand carries the attached cup across the table and releases it at the annotated frame](docs/gifs/ep_027_t02.gif)
+
+#### `ep_015_t01` — hand visible in 96.1% of frames
+
+![ep_015_t01: phone footage with MediaPipe landmarks next to the MuJoCo replay; the hand carries the attached cup across the table and releases it at the annotated frame](docs/gifs/ep_015_t01.gif)
 
 There is no failure clip. With the joint mapping fixed, every trial reaches
 ≥2 fingertip contacts in kinematic mode, so there is no honest "contact
-never happens" kinematic case left to show. The two trials that never reach
-≥2 contacts in physics mode are `ep_018_t03` and `ep_035_t01`.
+never happens" kinematic case left to show. The one trial that never
+reaches ≥2 contacts in physics mode is `ep_035_t01`.
 
 ### Which number comes from where
 
@@ -113,16 +125,48 @@ never happens" kinematic case left to show. The two trials that never reach
 |---|---|---|
 | **42.0mm** mean fingertip error | `retarget.py` → `outputs/retarget_summary.csv` | How far the robot fingertips are from my (scaled) fingertips. The real accuracy number. |
 | **63/63** trials with ≥2 fingertips on the cup | `replay.py --mode kinematic` → `outputs/replay_summary.csv` | Weak: the cup is placed at the hand's own fingertip centroid at the annotated grasp frame, so this mostly shows the fingertips close around that spot. Not object localisation. |
-| **61/63** trials with ≥2 fingertips on the cup | `replay.py --mode physics` → `outputs/replay_summary_physics.csv` | Same seeding, but the cup is moved only by contact forces and gravity. It's the more meaningful replay number, and it counts contact at some frame, not a held lift: the median trial has ≥2-tip contact in 10% of its frames (21% in kinematic mode). |
-| **0/63** cup ends on the sticky note | both replay modes | Heuristic with no calibration, see Limitations. |
+| **62/63** trials with ≥2 fingertips on the cup | `replay.py --mode physics` → `outputs/replay_summary_physics.csv` | Same seeding, but the cup is moved only by contact forces and gravity. It's the more meaningful replay number, and it counts contact at some frame, not a held lift: the median trial has ≥2-tip contact in 11% of its frames (27% in kinematic mode). |
+| **1/63** (kinematic), **0/63** (physics) cup ends on the sticky note | both replay modes | Placeholder target, no calibration: meaningless, see Limitations. |
 | GIF clips | `make_result_gifs.py` (kinematic attach, released at the annotated frame) | Illustration only. No reported number is computed from them. |
 
-Both counts are near the ceiling because of the seeding. The real
+All replay numbers use the approximate wrist trajectory (`--wrist image`,
+the default). Both counts are near the ceiling because of the seeding. The real
 difference shows in how long contact lasts: kinematic mode freezes the cup
 to the fingertips once it is touched, while in physics, with an imprecise
-grip (~42mm error), ≥2-tip contact holds for a median 10% of frames. In physics mode the cup starts at the fingertips with
+grip (~42mm error), ≥2-tip contact holds for a median 11% of frames. In physics mode the cup starts at the fingertips with
 nothing under it (the scene's table is not under the hand's coordinates),
 so gravity acts on it from the first frame.
+
+### Approximate wrist trajectory
+
+MediaPipe's world landmarks, which the retargeting uses, are centred on the
+hand, so they don't contain where the hand is. `scripts/wrist_traj.py` puts
+the wrist back in the phone camera's frame from the image landmarks with a
+pinhole model:
+
+- **Depth from apparent hand size.** Depth = f × L / (length in pixels),
+  for two bones with assumed typical lengths: wrist → middle-finger knuckle
+  9.5 cm, index knuckle → little knuckle 7.5 cm. A bone tilted towards the
+  camera only ever looks shorter, so each gives an upper bound on depth and
+  I take the smaller one. Using the first bone alone was far too noisy,
+  because in this camera angle it often points almost straight at the lens.
+- **Assumed focal length, not calibrated:** f = 924 px at the 1280×720
+  detection resolution. That is a typical phone main camera (26 mm
+  35mm-equivalent, about 69° horizontal field of view). I don't know my
+  phone's exact value for video.
+- Lightly smoothed (moving average, 9 frames for x/y, 15 for depth),
+  rotated with the same knuckle-up rotation, and shifted by one constant so
+  the wrist at the grasp frame sits 0.6 m above the floor. The model's
+  wrist body (not the forearm origin 21 cm behind it) is put on the
+  estimated wrist.
+
+**The accuracy of this trajectory is not measured.** Depth still wobbles a
+lot (median per-trial depth range ~30 cm on to_target trials), and every
+distance scales with the assumed focal length and hand size. What it does
+get right is the direction: the wrist moves image-right on 32/32 to_target
+trials and image-left on 30/30 to_start trials, matching the task. Physics
+mode is barely affected (62/63, vs 63/63 with the hand rotating in place in
+the same frame).
 
 ### Retargeting accuracy (63 trials, all episodes)
 
@@ -256,32 +300,24 @@ for quality.
 
 ## Limitations
 
-- **Global wrist translation is not recovered.** The wrist pose comes from
-  MediaPipe's *world* landmarks, which are centred on the hand itself, so
-  how far I moved the cup across the table is not in the data. The sim
-  hand only moves because the wrist rotates, and the free joint sits at
-  the forearm origin about 21cm behind the wrist. So rotation swings the
-  hand on a long lever: across the 32 to_target trials the attached cup
-  moves anywhere from 2cm to 62cm, none of which is real transport.
+- **The wrist trajectory is a monocular approximation.** Depth comes from
+  apparent hand size with an assumed focal length (924 px) and assumed bone
+  lengths (9.5 cm, 7.5 cm). There's no calibration, and its error isn't
+  measured. See [Approximate wrist trajectory](#approximate-wrist-trajectory).
 - **"On sticky note" is a heuristic, not ground truth.** There was no
   camera-to-table calibration captured during filming, so the scene's cup
   and sticky-note positions are placeholders, not measured locations.
   `replay.py` starts each trial's cup at the hand's own fingertips at the
   annotated grasp frame, so contact detection has something real to report,
   but the cup never ends within a sticky-note width of the placeholder
-  target (0/63 in both modes), which says nothing about real-world
+  target (1/63 kinematic, 0/63 physics), which says nothing about real-world
   placement accuracy.
 - **The grasp counts are seeded.** Because the cup starts at the fingertip
   centroid, ≥2-fingertip contact is close to guaranteed in kinematic mode
   (63/63). The kinematic mode teleports the cup with the fingertips once
   ≥2 touch it; `--mode physics` leaves the cup to MuJoCo's contact solver
-  instead (61/63 reach contact, median 10% of frames in contact). Neither
+  instead (62/63 reach contact, median 11% of frames in contact). Neither
   is evidence of a stable, physically held lift.
-- **The replay cup's axis is not real vertical.** In `replay.py` the cup
-  stands along the sim's z axis, which in this data is the phone camera's
-  depth axis. The GIFs rotate each clip so the cup stands along the grip's
-  knuckle line instead; that changes per-frame contact in 17% of frames
-  (1252/7392) but not the trial-level count (63/63 either way).
 - **Occlusion, not solver error, is the main source of inaccuracy** — see
   above. A second camera angle or markers on the fingers would likely fix
   this more than any change to the retargeting math.
@@ -296,9 +332,9 @@ for quality.
 
 - A second, overhead or side, camera to resolve the occlusion during
   transport — this is the single biggest lever on the 42mm error.
-- Recover global hand translation (image-space wrist position plus depth,
-  or a calibrated camera) so the sim hand actually carries the cup across
-  the table.
+- Calibrate the phone camera (focal length, plus a checkerboard on the
+  table) so the wrist trajectory has a measured error and real distances,
+  and constrain the replayed hand to stay above the table.
 - Calibrate the phone camera against the real table/cup/sticky-note layout
   so "on sticky note" becomes a real spatial check instead of a heuristic,
   and "up" is measured rather than inferred from the grip.

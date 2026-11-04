@@ -37,6 +37,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import CUP_BOTTOM_RADIUS, STICKY_NOTE_SIDE  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import wrist_traj  # noqa: E402
+
 TIP_BODY_HINT = "distal"
 # "on the sticky note" = cup center within the note's half-side plus the
 # cup's own footprint, so a cup resting with its base anywhere over the
@@ -264,6 +267,11 @@ def main() -> None:
                          "scene's placeholder position (wrist_pos is in "
                          "MediaPipe's camera frame, unrelated to the scene's "
                          "table/cup coordinates)")
+    ap.add_argument("--wrist", choices=["image", "rotate-only", "raw"], default="image",
+                    help="hand root pose: 'image' = approximate wrist trajectory "
+                         "recovered from the image landmarks (scripts/wrist_traj.py); "
+                         "'rotate-only' = hand-centred, rotates in place, same "
+                         "knuckle-up frame; 'raw' = the old camera-axes pose")
     args = ap.parse_args()
 
     src = Path(args.qpos)
@@ -288,12 +296,16 @@ def main() -> None:
         cup_start = None
         trial_path = trials_dir / f"{f.stem}.json"
         if trial_path.exists():
-            grasp_frame = json.loads(trial_path.read_text()).get("grasp_frame")
+            meta = json.loads(trial_path.read_text())
+            if args.wrist != "raw":
+                rec = wrist_traj.to_sim(rep, rec, meta, translate=args.wrist == "image")
+            grasp_frame = meta.get("grasp_frame")
             if grasp_frame is not None and 0 <= grasp_frame < len(rec["qpos"]):
                 cup_start = rep.tip_centroid_at_frame(rec, grasp_frame)
 
         res = rep.run(rec, out_path, cup_start=cup_start)
         res["trial"] = f.stem
+        res["wrist"] = args.wrist
         rows.append(res)
         print(f"  {f.stem}: contacts<={res['max_fingertip_contacts']}  "
               f"grasped {res['frames_with_grasp']}/{res['n_frames']} frames  "
