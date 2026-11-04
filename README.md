@@ -491,3 +491,12 @@ and what to look for at each step.
 - Policy training on top of the retargeted demonstrations (not attempted
   here, per the challenge's own phasing — this submission is the data
   pipeline and simulated replay, not an RL policy).
+
+## How this was built
+
+I recorded all the footage, designed the task, and hand-annotated all 63 trials
+myself. I used Claude (Claude Code) as a coding assistant to help write and
+debug the pipeline (retargeting, replay, rendering), the figures and the README
+text, and I reviewed the results and limitations. That's why "claude" shows up as
+a co-author on the commits: Claude Code adds a Co-Authored-By line to the commits
+it makes.
